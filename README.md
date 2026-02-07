@@ -20,15 +20,15 @@ Aplicación de escritorio para el registro, búsqueda y gestión de huéspedes e
 
 ## 🛠️ Tecnologías
 
-| Componente | Tecnología |
-|---|---|
-| Lenguaje | Python 3.11+ |
-| UI | CustomTkinter 5.2+ |
-| Base de datos | SQLite3 (WAL mode) |
-| Validación | Pydantic 2.0+ |
-| Excel | Pandas + openpyxl |
-| PDF | ReportLab |
-| Seguridad | bcrypt (work factor 12) |
+| Componente    | Tecnología              |
+| ------------- | ----------------------- |
+| Lenguaje      | Python 3.11+            |
+| UI            | CustomTkinter 5.2+      |
+| Base de datos | SQLite3 (WAL mode)      |
+| Validación    | Pydantic 2.0+           |
+| Excel         | Pandas + openpyxl       |
+| PDF           | ReportLab               |
+| Seguridad     | bcrypt (work factor 12) |
 
 ## 📁 Estructura del Proyecto
 
@@ -75,6 +75,7 @@ S.C.A.H./
 ## 🚀 Instalación
 
 ### Requisitos previos
+
 - Python 3.11 o superior
 - pip (gestor de paquetes)
 
@@ -99,9 +100,9 @@ python main.py
 
 ## 🔑 Credenciales por Defecto
 
-| Campo | Valor |
-|---|---|
-| **Usuario** | `admin` |
+| Campo          | Valor        |
+| -------------- | ------------ |
+| **Usuario**    | `admin`      |
 | **Contraseña** | `Admin2026!` |
 
 > ⚠️ **Cambie la contraseña del administrador en el primer inicio.**

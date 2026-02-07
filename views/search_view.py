@@ -346,11 +346,11 @@ class SearchView(ctk.CTkFrame):
         operador = self._adv_operator.get()
 
         try:
-            results = self._controller.buscar_avanzada(
+            results, total = self._controller.buscar_avanzada(
                 filtros=filtros,
                 operador=operador,
-                page=1,
-                page_size=PAGINATION_SIZE,
+                pagina=1,
+                por_pagina=PAGINATION_SIZE,
             )
             self._display_results(results)
         except Exception as e:

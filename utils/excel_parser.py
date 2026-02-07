@@ -149,14 +149,47 @@ class ExcelParser:
         Returns:
             Mapeo {columna_archivo: campo_sistema}.
         """
+        import unicodedata
+
+        def normalize(text: str) -> str:
+            """Normaliza texto removiendo acentos y caracteres especiales."""
+            text = text.strip().lower().replace(" ", "_")
+            nfkd = unicodedata.normalize("NFKD", text)
+            ascii_text = nfkd.encode("ascii", "ignore").decode("ascii")
+            ascii_text = ascii_text.replace(".", "").replace("°", "").replace("º", "")
+            return ascii_text
+
         mapping: dict[str, str] = {}
+        used_fields: set[str] = set()
 
         for system_field, aliases in COLUMNAS_MAPEO.items():
+            normalized_aliases = [normalize(a) for a in aliases]
             for col in file_columns:
+                if col in mapping:
+                    continue
                 col_clean = col.strip().lower().replace(" ", "_")
-                if col_clean in aliases:
+                col_normalized = normalize(col)
+
+                # Coincidencia exacta o normalizada
+                if col_clean in aliases or col_normalized in normalized_aliases:
                     mapping[col] = system_field
+                    used_fields.add(system_field)
                     break
+
+                # Coincidencia parcial (la columna contiene el alias)
+                for alias in aliases:
+                    alias_norm = normalize(alias)
+                    if alias_norm in col_normalized or col_normalized in alias_norm:
+                        if system_field not in used_fields:
+                            mapping[col] = system_field
+                            used_fields.add(system_field)
+                            break
+                if system_field in used_fields:
+                    break
+
+        logger.info("Columnas del archivo: %s", file_columns)
+        logger.info("Mapeo resultante: %s", mapping)
+        logger.info("Columnas no mapeadas: %s", [c for c in file_columns if c not in mapping])
 
         return mapping
 
@@ -181,18 +214,40 @@ class ExcelParser:
                     "apellido", "nombre", "nacionalidad", "procedencia",
                 ) else val.strip()
 
-        # Documentos
+        # Documentos — detectar tipo automáticamente
         dni = self._get_value(row, "dni")
-        if dni:
-            dni = dni.strip().replace(".", "").replace("-", "")
-            if dni.isdigit() and 7 <= len(dni) <= 8:
-                data["dni"] = dni
-
         pasaporte = self._get_value(row, "pasaporte")
-        if pasaporte:
-            pasaporte = pasaporte.strip().upper()
-            if pasaporte.isalnum() and 5 <= len(pasaporte) <= 15:
-                data["pasaporte"] = pasaporte
+
+        # Si hay columna combinada DNI/Pasaporte, detectar tipo
+        if dni and not pasaporte:
+            cleaned = dni.strip().replace(".", "").replace("-", "").replace(" ", "")
+            if cleaned.endswith(".0"):  # Fix float de Excel
+                cleaned = cleaned[:-2]
+            if cleaned.isdigit() and 7 <= len(cleaned) <= 8:
+                data["dni"] = cleaned
+            elif cleaned.isalnum() and 5 <= len(cleaned) <= 15:
+                data["pasaporte"] = cleaned.upper()
+        else:
+            if dni:
+                cleaned = dni.strip().replace(".", "").replace("-", "").replace(" ", "")
+                if cleaned.endswith(".0"):
+                    cleaned = cleaned[:-2]
+                if cleaned.isdigit() and 7 <= len(cleaned) <= 8:
+                    data["dni"] = cleaned
+            if pasaporte:
+                cleaned_p = pasaporte.strip().upper().replace(" ", "")
+                if cleaned_p.isalnum() and 5 <= len(cleaned_p) <= 15:
+                    data["pasaporte"] = cleaned_p
+
+        # Fallback: buscar número de 7-8 dígitos en cualquier columna
+        if "dni" not in data and "pasaporte" not in data:
+            for col_val in row.values:
+                val = str(col_val).strip().replace(".", "").replace("-", "").replace(" ", "")
+                if val.endswith(".0"):
+                    val = val[:-2]
+                if val.isdigit() and 7 <= len(val) <= 8:
+                    data["dni"] = val
+                    break
 
         # Validar que tenga al menos un documento
         if "dni" not in data and "pasaporte" not in data:
