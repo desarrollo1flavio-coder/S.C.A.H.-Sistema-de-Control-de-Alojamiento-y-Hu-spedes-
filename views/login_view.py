@@ -245,12 +245,15 @@ class LoginView(ctk.CTk):
             session = self._auth.login(username, password)
             self.after(0, lambda: self._on_success(session))
         except (AccountLockedError, AccountDisabledError, InvalidCredentialsError) as e:
-            self.after(0, lambda: self._on_error(e.message))
+            msg = e.message
+            self.after(0, lambda msg=msg: self._on_error(msg))
         except AuthenticationError as e:
-            self.after(0, lambda: self._on_error(e.message))
+            msg = e.message
+            self.after(0, lambda msg=msg: self._on_error(msg))
         except Exception as e:
             logger.error("Error inesperado en login: %s", e)
-            self.after(0, lambda: self._on_error("Error interno del sistema"))
+            msg = f"Error interno del sistema: {e}"
+            self.after(0, lambda msg=msg: self._on_error(msg))
         finally:
             self.after(0, self._finish_auth)
 

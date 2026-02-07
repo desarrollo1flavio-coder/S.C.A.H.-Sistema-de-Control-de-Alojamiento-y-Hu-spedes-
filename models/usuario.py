@@ -156,7 +156,7 @@ class UsuarioDAO:
         with get_transaction() as conn:
             conn.execute(
                 "UPDATE usuarios SET bloqueado_hasta = ? WHERE username = ?",
-                (hasta.isoformat(), username.strip().lower()),
+                (hasta.strftime("%Y-%m-%d %H:%M:%S"), username.strip().lower()),
             )
             logger.warning("Cuenta bloqueada: %s hasta %s", username, hasta)
 

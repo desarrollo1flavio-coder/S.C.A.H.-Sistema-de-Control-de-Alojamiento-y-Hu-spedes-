@@ -82,11 +82,11 @@ class ManualView(ctk.CTkFrame):
 
         self._fields["apellido"] = self._add_field(
             row1, "Apellido *", ValidatedEntry, 0, 0,
-            placeholder="Ej: González", validator=self._validate_required,
+            placeholder="Ej: González",
         )
         self._fields["nombre"] = self._add_field(
             row1, "Nombre *", ValidatedEntry, 0, 1,
-            placeholder="Ej: Juan Carlos", validator=self._validate_required,
+            placeholder="Ej: Juan Carlos",
         )
 
         row2 = ctk.CTkFrame(section, fg_color="transparent")
@@ -112,11 +112,9 @@ class ManualView(ctk.CTkFrame):
 
         self._fields["nacionalidad"] = self._add_combo(
             row3, "Nacionalidad *", NACIONALIDADES, 0, 0,
-            validator=self._validate_required,
         )
         self._fields["procedencia"] = self._add_combo(
             row3, "Procedencia *", PROVINCIAS_ARGENTINA + ["Otro"], 0, 1,
-            validator=self._validate_required,
         )
 
     # ── Sección: Datos de Estadía ────────────────────────────────
@@ -135,7 +133,7 @@ class ManualView(ctk.CTkFrame):
 
         self._fields["habitacion"] = self._add_field(
             row1, "Habitación *", ValidatedEntry, 0, 0,
-            placeholder="Ej: 201", validator=self._validate_required,
+            placeholder="Ej: 201",
         )
         self._fields["fecha_entrada"] = self._add_date(
             row1, "Fecha Entrada *", 0, 1,
@@ -187,7 +185,7 @@ class ManualView(ctk.CTkFrame):
 
         self._fields["vehiculo"] = CheckboxWithEntry(
             vehiculo_frame, label="Posee vehículo",
-            placeholder="Marca, modelo, patente",
+            entry_placeholder="Marca, modelo, patente",
         )
         self._fields["vehiculo"].pack(fill="x", pady=(2, 5))
 
@@ -266,19 +264,18 @@ class ManualView(ctk.CTkFrame):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.grid(row=row, column=col, sticky="ew", padx=5)
 
-        ctk.CTkLabel(
-            frame, text=label,
-            font=ctk.CTkFont(size=12, weight="bold"), anchor="w",
-        ).pack(fill="x")
+        # Detectar si es campo obligatorio (*)
+        required = label.endswith(" *")
+        label_clean = label.rstrip(" *") if required else label
 
-        kwargs = {"placeholder_text": placeholder}
-        if validator:
-            kwargs["validator"] = validator
-        if width:
-            kwargs["width"] = width
-
-        entry = field_cls(frame, **kwargs)
-        entry.pack(fill="x", pady=(2, 10))
+        entry = field_cls(
+            frame,
+            label=label_clean,
+            required=required,
+            placeholder=placeholder,
+            validator=validator,
+        )
+        entry.pack(fill="x", pady=(0, 5))
         return entry
 
     def _add_combo(
@@ -301,17 +298,17 @@ class ManualView(ctk.CTkFrame):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.grid(row=row, column=col, sticky="ew", padx=5)
 
-        ctk.CTkLabel(
-            frame, text=label,
-            font=ctk.CTkFont(size=12, weight="bold"), anchor="w",
-        ).pack(fill="x")
+        # Detectar si es campo obligatorio (*)
+        required = label.endswith(" *")
+        label_clean = label.rstrip(" *") if required else label
 
-        kwargs = {"values": values}
-        if validator:
-            kwargs["validator"] = validator
-
-        combo = ValidatedComboBox(frame, **kwargs)
-        combo.pack(fill="x", pady=(2, 10))
+        combo = ValidatedComboBox(
+            frame,
+            label=label_clean,
+            values=values,
+            required=required,
+        )
+        combo.pack(fill="x", pady=(0, 5))
         return combo
 
     def _add_date(
@@ -331,28 +328,17 @@ class ManualView(ctk.CTkFrame):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.grid(row=row, column=col, sticky="ew", padx=5)
 
-        ctk.CTkLabel(
-            frame, text=label,
-            font=ctk.CTkFont(size=12, weight="bold"), anchor="w",
-        ).pack(fill="x")
+        # Detectar si es campo obligatorio (*)
+        required = label.endswith(" *")
+        label_clean = label.rstrip(" *") if required else label
 
-        picker = DatePickerField(frame)
-        picker.pack(fill="x", pady=(2, 10))
+        picker = DatePickerField(
+            frame,
+            label=label_clean,
+            required=required,
+        )
+        picker.pack(fill="x", pady=(0, 5))
         return picker
-
-    @staticmethod
-    def _validate_required(value: str) -> Optional[str]:
-        """Valida que el campo no esté vacío.
-
-        Args:
-            value: Valor del campo.
-
-        Returns:
-            Mensaje de error o None.
-        """
-        if not value or not value.strip():
-            return "Este campo es obligatorio"
-        return None
 
     # ── Actions ──────────────────────────────────────────────────
 
