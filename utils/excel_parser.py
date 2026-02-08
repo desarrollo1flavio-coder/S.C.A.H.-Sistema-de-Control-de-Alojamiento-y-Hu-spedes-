@@ -28,6 +28,8 @@ class ExcelParser:
         """
         self._file_path = Path(file_path)
         self._column_map: dict[str, str] = {}
+        self._sheet_count: int = 0
+        self._sheet_names: list[str] = []
 
     def parse(self) -> dict:
         """Lee y procesa el archivo Excel.
@@ -57,8 +59,9 @@ class ExcelParser:
             )
             df = df.head(MAX_IMPORT_ROWS)
 
-        # Mapear columnas
-        self._column_map = self._auto_map_columns(df.columns.tolist())
+        # Mapear columnas (excluyendo columnas internas)
+        map_cols = [c for c in df.columns.tolist() if not c.startswith("_")]
+        self._column_map = self._auto_map_columns(map_cols)
         logger.info("Mapeo de columnas: %s", self._column_map)
 
         # Renombrar columnas según mapeo
@@ -72,16 +75,22 @@ class ExcelParser:
 
         for idx, row in df.iterrows():
             row_num = int(idx) + 2  # +2 por header + 0-index
+            hoja = row.get("_hoja_origen", "")
+            row_label = f"Hoja '{hoja}' fila {row_num}" if hoja else f"Fila {row_num}"
             try:
                 data = self._process_row(row)
                 if not data:
-                    errors.append({"row": row_num, "error": "Fila vacía o sin datos suficientes"})
+                    errors.append({"row": row_label, "error": "Fila vacía o sin datos suficientes"})
                     continue
+
+                # Guardar hoja de origen en el registro
+                if hoja:
+                    data["_hoja_origen"] = hoja
 
                 # Verificar duplicados dentro del archivo
                 doc_key = data.get("dni") or data.get("pasaporte") or ""
                 if doc_key and doc_key in seen_docs:
-                    duplicates.append({"row": row_num, **data})
+                    duplicates.append({"row": row_label, **data})
                     continue
                 if doc_key:
                     seen_docs.add(doc_key)
@@ -89,7 +98,7 @@ class ExcelParser:
                 valid_rows.append(data)
 
             except Exception as e:
-                errors.append({"row": row_num, "error": str(e)})
+                errors.append({"row": row_label, "error": str(e)})
 
         result = {
             "total_rows": total_rows,
@@ -97,6 +106,8 @@ class ExcelParser:
             "errors": errors,
             "duplicates": duplicates,
             "column_mapping": self._column_map,
+            "sheet_count": self._sheet_count,
+            "sheet_names": self._sheet_names,
         }
 
         logger.info(
@@ -107,33 +118,73 @@ class ExcelParser:
         return result
 
     def _read_file(self) -> pd.DataFrame:
-        """Lee el archivo Excel.
+        """Lee TODAS las hojas del archivo Excel y las concatena.
 
         Returns:
-            DataFrame con datos del archivo.
+            DataFrame con datos combinados de todas las hojas.
         """
         try:
             suffix = self._file_path.suffix.lower()
             engine = "openpyxl" if suffix == ".xlsx" else "xlrd"
 
-            df = pd.read_excel(
+            # Leer TODAS las hojas (sheet_name=None devuelve dict)
+            all_sheets = pd.read_excel(
                 self._file_path,
                 engine=engine,
                 dtype=str,
                 keep_default_na=False,
+                sheet_name=None,
             )
 
-            # Limpiar nombres de columnas
-            df.columns = [
-                str(col).strip().lower().replace(" ", "_")
-                for col in df.columns
-            ]
+            self._sheet_count = len(all_sheets)
+            self._sheet_names = list(all_sheets.keys())
+            logger.info(
+                "Hojas encontradas (%d): %s",
+                self._sheet_count, self._sheet_names,
+            )
 
-            # Eliminar filas completamente vacías
-            df = df.dropna(how="all")
-            df = df[df.astype(str).apply(lambda x: x.str.strip().str.len().sum(), axis=1) > 0]
+            frames: list[pd.DataFrame] = []
+            for sheet_name, sheet_df in all_sheets.items():
+                if sheet_df.empty:
+                    logger.info("Hoja '%s' vacía, omitida", sheet_name)
+                    continue
 
-            logger.info("Archivo leído: %d filas, %d columnas", len(df), len(df.columns))
+                # Limpiar nombres de columnas
+                sheet_df.columns = [
+                    str(col).strip().lower().replace(" ", "_")
+                    for col in sheet_df.columns
+                ]
+
+                # Eliminar filas completamente vacías
+                sheet_df = sheet_df.dropna(how="all")
+                sheet_df = sheet_df[
+                    sheet_df.astype(str).apply(
+                        lambda x: x.str.strip().str.len().sum(), axis=1,
+                    ) > 0
+                ]
+
+                if not sheet_df.empty:
+                    sheet_df = sheet_df.copy()
+                    sheet_df["_hoja_origen"] = str(sheet_name)
+                    frames.append(sheet_df)
+                    logger.info(
+                        "Hoja '%s': %d filas, %d columnas",
+                        sheet_name, len(sheet_df), len(sheet_df.columns) - 1,
+                    )
+
+            if not frames:
+                logger.warning("Ninguna hoja contiene datos")
+                return pd.DataFrame()
+
+            # Concatenar todas las hojas
+            df = pd.concat(frames, ignore_index=True, sort=False)
+            # Rellenar NaN de columnas faltantes con cadena vacía
+            df = df.fillna("")
+
+            logger.info(
+                "Total combinado: %d filas de %d hojas",
+                len(df), len(frames),
+            )
             return df
 
         except Exception as e:
@@ -176,10 +227,12 @@ class ExcelParser:
                     used_fields.add(system_field)
                     break
 
-                # Coincidencia parcial (la columna contiene el alias)
+                # Coincidencia parcial (solo con aliases de 5+ caracteres)
                 for alias in aliases:
                     alias_norm = normalize(alias)
-                    if alias_norm in col_normalized or col_normalized in alias_norm:
+                    if len(alias_norm) >= 5 and (
+                        alias_norm in col_normalized or col_normalized in alias_norm
+                    ):
                         if system_field not in used_fields:
                             mapping[col] = system_field
                             used_fields.add(system_field)

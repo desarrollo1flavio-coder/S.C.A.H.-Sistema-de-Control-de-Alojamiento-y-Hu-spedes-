@@ -189,8 +189,7 @@ class SearchView(ctk.CTkFrame):
             ("id", "ID", 50),
             ("apellido", "Apellido", 130),
             ("nombre", "Nombre", 130),
-            ("dni", "DNI", 90),
-            ("pasaporte", "Pasaporte", 100),
+            ("documento", "Documento", 160),
             ("nacionalidad", "Nacionalidad", 110),
             ("habitacion", "Hab.", 60),
             ("fecha_entrada", "Entrada", 100),
@@ -359,6 +358,29 @@ class SearchView(ctk.CTkFrame):
 
     # ── Display Results ──────────────────────────────────────────
 
+    @staticmethod
+    def _add_documento_field(records: list[dict]) -> list[dict]:
+        """Agrega campo virtual 'documento' combinando DNI y pasaporte.
+
+        Args:
+            records: Lista de registros de la BD.
+
+        Returns:
+            Lista con campo 'documento' agregado.
+        """
+        for rec in records:
+            dni = rec.get("dni") or ""
+            pas = rec.get("pasaporte") or ""
+            if dni and pas:
+                rec["documento"] = f"DNI: {dni} / PAS: {pas}"
+            elif dni:
+                rec["documento"] = f"DNI: {dni}"
+            elif pas:
+                rec["documento"] = f"PAS: {pas}"
+            else:
+                rec["documento"] = "S/N"
+        return records
+
     def _display_results(self, results: list[dict]) -> None:
         """Muestra resultados en la tabla.
 
@@ -366,6 +388,7 @@ class SearchView(ctk.CTkFrame):
             results: Lista de registros.
         """
         self._total_results = len(results)
+        results = self._add_documento_field(results)
         self._table.load_data(results)
         self._result_count.configure(text=f"{self._total_results} resultado(s)")
         self._update_action_buttons(False)
@@ -448,12 +471,23 @@ class SearchView(ctk.CTkFrame):
             font=ctk.CTkFont(size=18, weight="bold"),
         ).pack(fill="x", pady=(0, 15))
 
+        # Construir campo Documento combinado
+        dni_val = data.get("dni") or ""
+        pas_val = data.get("pasaporte") or ""
+        if dni_val and pas_val:
+            data["documento_detalle"] = f"DNI: {dni_val} / Pasaporte: {pas_val}"
+        elif dni_val:
+            data["documento_detalle"] = f"DNI: {dni_val}"
+        elif pas_val:
+            data["documento_detalle"] = f"Pasaporte: {pas_val}"
+        else:
+            data["documento_detalle"] = "S/N"
+
         fields = [
             ("ID", "id"),
             ("Nacionalidad", "nacionalidad"),
             ("Procedencia", "procedencia"),
-            ("DNI", "dni"),
-            ("Pasaporte", "pasaporte"),
+            ("Documento", "documento_detalle"),
             ("Edad", "edad"),
             ("Profesión", "profesion"),
             ("Habitación", "habitacion"),

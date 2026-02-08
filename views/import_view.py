@@ -188,6 +188,8 @@ class ImportView(ctk.CTkFrame):
                 "errors": len(result.get("errors", [])),
                 "duplicates": len(result.get("duplicates", [])),
                 "error_details": result.get("errors", []),
+                "sheet_count": result.get("sheet_count", 1),
+                "sheet_names": result.get("sheet_names", []),
             }
 
             self.after(0, self._display_preview)
@@ -227,6 +229,19 @@ class ImportView(ctk.CTkFrame):
         ).pack(fill="x", padx=15, pady=(10, 5))
 
         if self._preview_data:
+            # Unificar DNI y Pasaporte en columna "Documento"
+            for rec in self._preview_data:
+                dni = rec.pop("dni", None) or ""
+                pas = rec.pop("pasaporte", None) or ""
+                if dni and pas:
+                    rec["documento"] = f"DNI: {dni} / PAS: {pas}"
+                elif dni:
+                    rec["documento"] = f"DNI: {dni}"
+                elif pas:
+                    rec["documento"] = f"PAS: {pas}"
+                else:
+                    rec["documento"] = "S/N"
+
             columns = list(self._preview_data[0].keys())
             col_defs = [(col, col.replace("_", " ").title(), 120) for col in columns]
 
@@ -245,6 +260,7 @@ class ImportView(ctk.CTkFrame):
 
         s = self._import_summary
         stats = [
+            ("📋 Hojas leídas:", str(s.get("sheet_count", 1)), "#64B5F6"),
             ("Total filas leídas:", str(s.get("total_rows", 0)), "gray90"),
             ("✅ Válidos:", str(s.get("valid", 0)), "#4ECB71"),
             ("❌ Errores:", str(s.get("errors", 0)), "#FF6B6B"),

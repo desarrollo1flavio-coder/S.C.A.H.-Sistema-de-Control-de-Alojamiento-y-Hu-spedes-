@@ -22,7 +22,7 @@ class DataTable(ctk.CTkFrame):
     def __init__(
         self,
         master: ctk.CTkBaseClass,
-        columns: list[dict],
+        columns: list,
         on_select: Optional[Callable[[dict], None]] = None,
         on_double_click: Optional[Callable[[dict], None]] = None,
         page_size: int = PAGINATION_SIZE,
@@ -33,8 +33,9 @@ class DataTable(ctk.CTkFrame):
 
         Args:
             master: Widget padre.
-            columns: Lista de dicts con keys 'key', 'label', 'width', 'anchor'.
-                     Ejemplo: [{'key': 'nombre', 'label': 'Nombre', 'width': 150}]
+            columns: Lista de dicts o tuplas con información de columnas.
+                     Dict: {'key': 'nombre', 'label': 'Nombre', 'width': 150}
+                     Tupla: ('nombre', 'Nombre', 150)
             on_select: Callback al seleccionar una fila.
             on_double_click: Callback al hacer doble click en una fila.
             page_size: Registros por página.
@@ -42,7 +43,21 @@ class DataTable(ctk.CTkFrame):
         """
         super().__init__(master, **kwargs)
 
-        self._columns = columns
+        # Normalizar columnas: aceptar tuplas (key, label, width) o dicts
+        self._columns = []
+        for col in columns:
+            if isinstance(col, dict):
+                self._columns.append(col)
+            elif isinstance(col, (tuple, list)) and len(col) >= 3:
+                self._columns.append({
+                    "key": col[0],
+                    "label": col[1],
+                    "width": col[2],
+                    "anchor": col[3] if len(col) > 3 else "w",
+                })
+            else:
+                raise ValueError(f"Formato de columna inválido: {col}")
+
         self._on_select = on_select
         self._on_double_click = on_double_click
         self._page_size = page_size
