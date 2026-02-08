@@ -187,6 +187,7 @@ class ImportView(ctk.CTkFrame):
                 "valid": len(self._all_data),
                 "errors": len(result.get("errors", [])),
                 "duplicates": len(result.get("duplicates", [])),
+                "skipped": result.get("skipped", 0),
                 "error_details": result.get("errors", []),
                 "sheet_count": result.get("sheet_count", 1),
                 "sheet_names": result.get("sheet_names", []),
@@ -242,7 +243,7 @@ class ImportView(ctk.CTkFrame):
                 else:
                     rec["documento"] = "S/N"
 
-            columns = list(self._preview_data[0].keys())
+            columns = [c for c in self._preview_data[0].keys() if not c.startswith("_")]
             col_defs = [(col, col.replace("_", " ").title(), 120) for col in columns]
 
             table = DataTable(preview_frame, columns=col_defs, page_size=PREVIEW_ROWS)
@@ -265,6 +266,7 @@ class ImportView(ctk.CTkFrame):
             ("✅ Válidos:", str(s.get("valid", 0)), "#4ECB71"),
             ("❌ Errores:", str(s.get("errors", 0)), "#FF6B6B"),
             ("⚠️ Duplicados:", str(s.get("duplicates", 0)), "#FFA500"),
+            ("⏭️ Omitidas:", str(s.get("skipped", 0)), "gray60"),
         ]
 
         for label, value, color in stats:

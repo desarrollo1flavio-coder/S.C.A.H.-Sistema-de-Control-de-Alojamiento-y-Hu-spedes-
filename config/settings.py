@@ -68,28 +68,48 @@ ALLOWED_EXTENSIONS: list[str] = [".xlsx", ".xls"]
 MAX_IMPORT_ROWS: int = 10000
 PREVIEW_ROWS: int = 10
 
+# Columnas del Excel que se deben ignorar (contadores, numeradores, etc.)
+COLUMNAS_IGNORAR: list[str] = [
+    "n°", "nro", "nº", "n", "#", "numero", "número",
+    "item", "orden", "nro.", "n°.",
+]
+
 COLUMNAS_MAPEO: dict[str, list[str]] = {
     "nacionalidad": ["nacionalidad", "pais", "país", "country", "nation", "nacion", "nación"],
     "procedencia": ["procedencia", "origen", "ciudad_origen", "from", "domicilio",
                      "direccion", "dirección", "ciudad"],
-    "apellido": ["apellido", "apellidos", "last_name", "surname",
-                  "apellido_y_nombre", "apellido/nombre", "apellido_nombre"],
+    # Campo especial: contiene "apellido y nombre" combinados, se divide en _process_row
+    "apellido_nombre": ["apellido_y_nombre", "apellido/nombre", "apellido_nombre",
+                         "apellido_y_nombres", "apellidos_y_nombre",
+                         "apellidos_y_nombres", "nombre_y_apellido",
+                         "nombre_apellido", "nombres_y_apellido"],
+    "apellido": ["apellido", "apellidos", "last_name", "surname"],
     "nombre": ["nombre", "nombres", "first_name", "name"],
     "dni": ["dni", "documento", "nro_documento", "document",
             "d.n.i", "d.n.i.", "n°_doc", "nro_doc", "n_doc",
             "n°_documento", "nº_doc", "nº_documento",
             "numero_documento", "número_documento", "numero_doc",
             "n°doc", "n°_de_doc", "nro._doc", "nro._documento",
-            "dni/pasaporte", "dni_/_pasaporte", "dni_o_pasaporte"],
+            "dni/pasaporte", "dni_/_pasaporte", "dni_o_pasaporte",
+            "d.n.i._/_pas.", "d.n.i._/_pas", "dni_/_pas.", "dni_/_pas",
+            "dni/pas", "d.n.i./pas.", "d.n.i./pas", "d.n.i./pasaporte",
+            "dni/pas.", "d.n.i_/_pas", "dni_pas"],
     "pasaporte": ["pasaporte", "passport", "nro_pasaporte",
                    "n°_pasaporte", "nº_pasaporte"],
     "edad": ["edad", "age", "años", "edades"],
+    "fecha_nacimiento": ["fecha_nacimiento", "fecha_de_nacimiento", "nacimiento",
+                          "fecha_de_nac.", "fecha_de_nac", "fecha_nac", "fecha_nac.",
+                          "f._nac.", "f._nac", "fec._nac.", "fec._nac",
+                          "fec._nacimiento", "f.nac", "f.nac.", "fec.nac",
+                          "fec.nac.", "birth_date", "date_of_birth",
+                          "fch_nac", "fch._nac", "fch._nac."],
     "profesion": ["profesion", "profesión", "ocupacion", "ocupación",
                   "profession", "occupation", "prof", "prof."],
     "habitacion": ["habitacion", "habitación", "room",
                    "nro_habitacion", "nro_habitación", "cuarto",
                    "n°_hab", "n°_hab.", "nº_hab", "nro._hab",
-                   "n°_habitacion", "n°_habitación"],
+                   "n°_habitacion", "n°_habitación",
+                   "hotel", "alojamiento", "establecimiento"],
     "destino": ["destino", "destination", "hacia", "a_donde", "destino_a"],
     "vehiculo": ["vehiculo", "vehículo", "vehicle", "auto", "coche",
                  "vehic", "vehic.", "patente", "dominio",

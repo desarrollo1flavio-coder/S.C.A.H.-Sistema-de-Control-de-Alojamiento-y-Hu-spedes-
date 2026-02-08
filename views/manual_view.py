@@ -106,6 +106,15 @@ class ManualView(ctk.CTkFrame):
             placeholder="Ej: 30", width=80,
         )
 
+        row2b = ctk.CTkFrame(section, fg_color="transparent")
+        row2b.pack(fill="x", pady=2)
+        row2b.columnconfigure(0, weight=1)
+
+        self._fields["fecha_nacimiento"] = self._add_field(
+            row2b, "Fecha Nacimiento", ValidatedEntry, 0, 0,
+            placeholder="DD/MM/AAAA", width=140,
+        )
+
         row3 = ctk.CTkFrame(section, fg_color="transparent")
         row3.pack(fill="x", pady=2)
         row3.columnconfigure((0, 1), weight=1)
@@ -351,7 +360,8 @@ class ManualView(ctk.CTkFrame):
         data: dict = {}
 
         for key in ("apellido", "nombre", "dni", "pasaporte", "edad",
-                     "habitacion", "destino", "profesion", "telefono"):
+                     "fecha_nacimiento", "habitacion", "destino",
+                     "profesion", "telefono"):
             field = self._fields.get(key)
             if field and hasattr(field, "get"):
                 val = field.get().strip()
@@ -371,6 +381,15 @@ class ManualView(ctk.CTkFrame):
                 data["edad"] = int(data["edad"])
             except ValueError:
                 data["edad"] = None
+
+        # Fecha de nacimiento
+        if "fecha_nacimiento" in data:
+            from utils.excel_parser import ExcelParser
+            parsed = ExcelParser._parse_date(data["fecha_nacimiento"])
+            if parsed:
+                data["fecha_nacimiento"] = parsed
+            else:
+                data.pop("fecha_nacimiento", None)
 
         # Fechas
         fecha_entrada = self._fields.get("fecha_entrada")

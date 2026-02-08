@@ -30,6 +30,7 @@ class HuespedSchema(BaseModel):
     dni: Optional[str] = Field(default=None, max_length=8)
     pasaporte: Optional[str] = Field(default=None, max_length=15)
     edad: Optional[int] = Field(default=None, gt=0, lt=150)
+    fecha_nacimiento: Optional[date] = None
     profesion: Optional[str] = Field(default=None, max_length=100)
     habitacion: str = Field(..., min_length=1, max_length=20)
     destino: Optional[str] = Field(default=None, max_length=200)
@@ -103,9 +104,9 @@ class HuespedDAO:
             cursor = conn.execute(
                 "INSERT INTO huespedes "
                 "(nacionalidad, procedencia, apellido, nombre, dni, pasaporte, "
-                "edad, profesion, habitacion, destino, vehiculo_tiene, vehiculo_datos, "
-                "telefono, fecha_entrada, fecha_salida, usuario_carga) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "edad, fecha_nacimiento, profesion, habitacion, destino, vehiculo_tiene, "
+                "vehiculo_datos, telefono, fecha_entrada, fecha_salida, usuario_carga) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     datos["nacionalidad"],
                     datos["procedencia"],
@@ -114,6 +115,7 @@ class HuespedDAO:
                     datos.get("dni"),
                     datos.get("pasaporte"),
                     datos.get("edad"),
+                    str(datos["fecha_nacimiento"]) if datos.get("fecha_nacimiento") else None,
                     datos.get("profesion"),
                     datos["habitacion"],
                     datos.get("destino"),
@@ -165,8 +167,9 @@ class HuespedDAO:
         """
         campos_permitidos = [
             "nacionalidad", "procedencia", "apellido", "nombre", "dni", "pasaporte",
-            "edad", "profesion", "habitacion", "destino", "vehiculo_tiene",
-            "vehiculo_datos", "telefono", "fecha_entrada", "fecha_salida",
+            "edad", "fecha_nacimiento", "profesion", "habitacion", "destino",
+            "vehiculo_tiene", "vehiculo_datos", "telefono", "fecha_entrada",
+            "fecha_salida",
         ]
         campos: list[str] = []
         valores: list = []
@@ -176,7 +179,7 @@ class HuespedDAO:
                 valor = datos[campo]
                 if campo == "vehiculo_tiene":
                     valor = 1 if valor else 0
-                elif campo in ("fecha_entrada", "fecha_salida") and valor is not None:
+                elif campo in ("fecha_entrada", "fecha_salida", "fecha_nacimiento") and valor is not None:
                     valor = str(valor)
                 campos.append(f"{campo} = ?")
                 valores.append(valor)
@@ -370,9 +373,10 @@ class HuespedDAO:
                     conn.execute(
                         "INSERT INTO huespedes "
                         "(nacionalidad, procedencia, apellido, nombre, dni, pasaporte, "
-                        "edad, profesion, habitacion, destino, vehiculo_tiene, "
-                        "vehiculo_datos, telefono, fecha_entrada, fecha_salida, "
-                        "usuario_carga) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "edad, fecha_nacimiento, profesion, habitacion, destino, "
+                        "vehiculo_tiene, vehiculo_datos, telefono, fecha_entrada, "
+                        "fecha_salida, usuario_carga) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             datos["nacionalidad"],
                             datos["procedencia"],
@@ -381,6 +385,7 @@ class HuespedDAO:
                             datos.get("dni"),
                             datos.get("pasaporte"),
                             datos.get("edad"),
+                            str(datos["fecha_nacimiento"]) if datos.get("fecha_nacimiento") else None,
                             datos.get("profesion"),
                             datos["habitacion"],
                             datos.get("destino"),

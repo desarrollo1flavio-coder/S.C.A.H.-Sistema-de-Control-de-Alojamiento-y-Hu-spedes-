@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from config.settings import COLUMNAS_MAPEO, MAX_IMPORT_ROWS
+from config.settings import COLUMNAS_IGNORAR, COLUMNAS_MAPEO, MAX_IMPORT_ROWS
 from utils.logger import get_logger
 from utils.validators import sanitizar_texto
 
@@ -59,28 +59,24 @@ class ExcelParser:
             )
             df = df.head(MAX_IMPORT_ROWS)
 
-        # Mapear columnas (excluyendo columnas internas)
-        map_cols = [c for c in df.columns.tolist() if not c.startswith("_")]
-        self._column_map = self._auto_map_columns(map_cols)
-        logger.info("Mapeo de columnas: %s", self._column_map)
-
-        # Renombrar columnas según mapeo
-        df = df.rename(columns=self._column_map)
+        # Columnas ya mapeadas por hoja en _read_file; solo log
+        logger.info("Mapeo de columnas consolidado: %s", self._column_map)
 
         # Procesar filas
         valid_rows: list[dict] = []
         errors: list[dict] = []
         seen_docs: set[str] = set()
         duplicates: list[dict] = []
+        skipped: int = 0
 
         for idx, row in df.iterrows():
-            row_num = int(idx) + 2  # +2 por header + 0-index
             hoja = row.get("_hoja_origen", "")
-            row_label = f"Hoja '{hoja}' fila {row_num}" if hoja else f"Fila {row_num}"
+            fila = row.get("_fila_original", int(idx) + 2)
+            row_label = f"Hoja '{hoja}' fila {fila}" if hoja else f"Fila {fila}"
             try:
                 data = self._process_row(row)
                 if not data:
-                    errors.append({"row": row_label, "error": "Fila vacía o sin datos suficientes"})
+                    skipped += 1
                     continue
 
                 # Guardar hoja de origen en el registro
@@ -105,23 +101,28 @@ class ExcelParser:
             "valid_rows": valid_rows,
             "errors": errors,
             "duplicates": duplicates,
+            "skipped": skipped,
             "column_mapping": self._column_map,
             "sheet_count": self._sheet_count,
             "sheet_names": self._sheet_names,
         }
 
         logger.info(
-            "Resultado: %d válidos, %d errores, %d duplicados de %d totales",
-            len(valid_rows), len(errors), len(duplicates), total_rows,
+            "Resultado: %d válidos, %d errores, %d duplicados, %d omitidas de %d totales",
+            len(valid_rows), len(errors), len(duplicates), skipped, total_rows,
         )
 
         return result
 
     def _read_file(self) -> pd.DataFrame:
-        """Lee TODAS las hojas del archivo Excel y las concatena.
+        """Lee TODAS las hojas del archivo Excel, mapea columnas por hoja y las concatena.
+
+        Cada hoja recibe su propio mapeo de columnas para que hojas con
+        nombres de columna diferentes se procesen correctamente.
 
         Returns:
-            DataFrame con datos combinados de todas las hojas.
+            DataFrame con datos combinados de todas las hojas, columnas
+            ya renombradas a los campos del sistema.
         """
         try:
             suffix = self._file_path.suffix.lower()
@@ -143,7 +144,9 @@ class ExcelParser:
                 self._sheet_count, self._sheet_names,
             )
 
+            all_mappings: dict[str, str] = {}
             frames: list[pd.DataFrame] = []
+
             for sheet_name, sheet_df in all_sheets.items():
                 if sheet_df.empty:
                     logger.info("Hoja '%s' vacía, omitida", sheet_name)
@@ -163,14 +166,26 @@ class ExcelParser:
                     ) > 0
                 ]
 
-                if not sheet_df.empty:
-                    sheet_df = sheet_df.copy()
-                    sheet_df["_hoja_origen"] = str(sheet_name)
-                    frames.append(sheet_df)
-                    logger.info(
-                        "Hoja '%s': %d filas, %d columnas",
-                        sheet_name, len(sheet_df), len(sheet_df.columns) - 1,
-                    )
+                if sheet_df.empty:
+                    continue
+
+                # Mapear columnas POR HOJA para manejar nombres diferentes
+                sheet_cols = [c for c in sheet_df.columns.tolist() if not c.startswith("_")]
+                sheet_map = self._auto_map_columns(sheet_cols)
+                all_mappings.update(sheet_map)
+                sheet_df = sheet_df.rename(columns=sheet_map)
+
+                sheet_df = sheet_df.copy()
+                sheet_df["_hoja_origen"] = str(sheet_name)
+                # Guardar número de fila original dentro de la hoja
+                sheet_df["_fila_original"] = range(2, len(sheet_df) + 2)
+                frames.append(sheet_df)
+                logger.info(
+                    "Hoja '%s': %d filas, %d columnas mapeadas",
+                    sheet_name, len(sheet_df), len(sheet_map),
+                )
+
+            self._column_map = all_mappings
 
             if not frames:
                 logger.warning("Ninguna hoja contiene datos")
@@ -213,9 +228,21 @@ class ExcelParser:
         mapping: dict[str, str] = {}
         used_fields: set[str] = set()
 
+        # Normalizar lista de columnas a ignorar
+        ignorar_norm = [normalize(ig) for ig in COLUMNAS_IGNORAR]
+
+        # Filtrar columnas que son contadores/numeradores
+        cols_validas = []
+        for col in file_columns:
+            col_norm = normalize(col)
+            if col_norm in ignorar_norm:
+                logger.debug("Columna ignorada (contador): %s", col)
+            else:
+                cols_validas.append(col)
+
         for system_field, aliases in COLUMNAS_MAPEO.items():
             normalized_aliases = [normalize(a) for a in aliases]
-            for col in file_columns:
+            for col in cols_validas:
                 if col in mapping:
                     continue
                 col_clean = col.strip().lower().replace(" ", "_")
@@ -257,15 +284,37 @@ class ExcelParser:
         """
         data: dict[str, Any] = {}
 
+        # Campo combinado "APELLIDO Y NOMBRE" → dividir en apellido + nombre
+        apellido_nombre_val = self._get_value(row, "apellido_nombre")
+        if apellido_nombre_val:
+            texto = apellido_nombre_val.strip()
+            if "," in texto:
+                # Formato: "GONZALEZ, JUAN CARLOS"
+                partes = texto.split(",", 1)
+                data["apellido"] = sanitizar_texto(partes[0].strip())
+                data["nombre"] = sanitizar_texto(partes[1].strip()) if len(partes) > 1 and partes[1].strip() else ""
+            else:
+                # Formato: "GONZALEZ JUAN CARLOS" — primera palabra = apellido
+                partes = texto.split(None, 1)
+                data["apellido"] = sanitizar_texto(partes[0]) if partes else ""
+                data["nombre"] = sanitizar_texto(partes[1]) if len(partes) > 1 else ""
+
         # Campos de texto
         for field in ("apellido", "nombre", "nacionalidad", "procedencia",
                        "profesion", "habitacion", "destino", "telefono",
                        "vehiculo"):
+            # No sobrescribir apellido/nombre si ya se extrajeron del campo combinado
+            if field in ("apellido", "nombre") and field in data and data[field]:
+                continue
             val = self._get_value(row, field)
             if val:
                 data[field] = sanitizar_texto(val) if field in (
                     "apellido", "nombre", "nacionalidad", "procedencia",
                 ) else val.strip()
+
+        # Si no tiene apellido ni nombre, no es una fila de datos reales
+        if "apellido" not in data and "nombre" not in data:
+            return None
 
         # Documentos — detectar tipo automáticamente
         dni = self._get_value(row, "dni")
@@ -294,7 +343,9 @@ class ExcelParser:
 
         # Fallback: buscar número de 7-8 dígitos en cualquier columna
         if "dni" not in data and "pasaporte" not in data:
-            for col_val in row.values:
+            for col_name, col_val in row.items():
+                if str(col_name).startswith("_"):
+                    continue
                 val = str(col_val).strip().replace(".", "").replace("-", "").replace(" ", "")
                 if val.endswith(".0"):
                     val = val[:-2]
@@ -302,9 +353,11 @@ class ExcelParser:
                     data["dni"] = val
                     break
 
-        # Validar que tenga al menos un documento
+        # Validar documento — solo reportar error si tiene AMBOS nombres
         if "dni" not in data and "pasaporte" not in data:
-            raise ValueError("Sin documento válido (DNI o Pasaporte)")
+            if "apellido" in data and "nombre" in data:
+                raise ValueError("Sin documento válido (DNI o Pasaporte)")
+            return None  # Fila parcial sin nombres completos ni doc: omitir
 
         # Validar campos obligatorios
         for required in ("apellido", "nombre"):
@@ -328,6 +381,13 @@ class ExcelParser:
                     data["edad"] = edad_int
             except (ValueError, TypeError):
                 pass
+
+        # Fecha de nacimiento
+        fecha_nac = self._get_value(row, "fecha_nacimiento")
+        if fecha_nac:
+            parsed_nac = self._parse_date(fecha_nac)
+            if parsed_nac:
+                data["fecha_nacimiento"] = parsed_nac
 
         # Fechas
         data["fecha_entrada"] = self._parse_date(

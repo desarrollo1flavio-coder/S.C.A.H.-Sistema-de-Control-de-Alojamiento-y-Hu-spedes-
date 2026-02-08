@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS huespedes (
     dni             TEXT    UNIQUE,
     pasaporte       TEXT    UNIQUE,
     edad            INTEGER CHECK(edad IS NULL OR (edad > 0 AND edad < 150)),
+    fecha_nacimiento DATE,
     profesion       TEXT,
     habitacion      TEXT    NOT NULL,
     destino         TEXT,

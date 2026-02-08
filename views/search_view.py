@@ -489,6 +489,7 @@ class SearchView(ctk.CTkFrame):
             ("Procedencia", "procedencia"),
             ("Documento", "documento_detalle"),
             ("Edad", "edad"),
+            ("Fecha Nacimiento", "fecha_nacimiento"),
             ("Profesión", "profesion"),
             ("Habitación", "habitacion"),
             ("Destino", "destino"),
