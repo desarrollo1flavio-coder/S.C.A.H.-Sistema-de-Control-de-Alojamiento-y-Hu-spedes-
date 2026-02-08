@@ -40,6 +40,8 @@ class ImportView(ctk.CTkFrame):
         self._all_data: list[dict] = []
         self._import_summary: dict = {}
         self._is_importing = False
+        self._available_sheets: list[str] = []
+        self._selected_sheets: Optional[list[str]] = None  # None = todas
 
         self._build_ui()
 
@@ -164,7 +166,131 @@ class ImportView(ctk.CTkFrame):
         )
         self._show_msg("")
 
-        # Precargar en hilo
+        # Leer hojas disponibles y mostrar selector
+        thread = threading.Thread(target=self._load_sheet_list, daemon=True)
+        thread.start()
+
+    def _load_sheet_list(self) -> None:
+        """Lee la lista de hojas numéricas del archivo en un hilo."""
+        self.after(0, lambda: self._show_msg("Leyendo hojas del archivo..."))
+        try:
+            from utils.excel_parser import ExcelParser
+            sheets = ExcelParser.list_sheets(self._file_path)
+            self._available_sheets = sheets
+            self.after(0, self._show_sheet_selector)
+        except Exception as e:
+            logger.error("Error al leer hojas: %s", e)
+            msg = f"❌ Error al leer hojas: {e}"
+            self.after(0, lambda msg=msg: self._show_msg(msg))
+
+    def _show_sheet_selector(self) -> None:
+        """Muestra el selector de hojas antes de la preview."""
+        for w in self._content_frame.winfo_children():
+            w.destroy()
+
+        self._show_msg("")
+
+        container = ctk.CTkFrame(self._content_frame, fg_color="transparent")
+        container.pack(fill="both", expand=True)
+
+        center = ctk.CTkFrame(container, fg_color="transparent")
+        center.place(relx=0.5, rely=0.35, anchor="center")
+
+        ctk.CTkLabel(
+            center, text="📊  Seleccionar Hojas",
+            font=ctk.CTkFont(size=18, weight="bold"),
+        ).pack(pady=(0, 10))
+
+        ctk.CTkLabel(
+            center,
+            text=f"El archivo contiene {len(self._available_sheets)} hojas con datos.",
+            font=ctk.CTkFont(size=13),
+            text_color=("gray40", "gray60"),
+        ).pack(pady=(0, 15))
+
+        # Botón: Todas las hojas
+        ctk.CTkButton(
+            center, text=f"✅  Todas las hojas ({len(self._available_sheets)})",
+            width=280, height=40,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._select_all_sheets,
+        ).pack(pady=(0, 10))
+
+        ctk.CTkLabel(
+            center, text="— o elegir hojas específicas —",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray50", "gray50"),
+        ).pack(pady=(5, 10))
+
+        # Frame scrollable con checkboxes de hojas
+        check_frame = ctk.CTkScrollableFrame(
+            center, width=350, height=200, corner_radius=8,
+        )
+        check_frame.pack(pady=(0, 15))
+
+        self._sheet_checkboxes: dict[str, ctk.CTkCheckBox] = {}
+
+        # Organizar en grilla de 5 columnas
+        cols = 5
+        for idx, sheet in enumerate(self._available_sheets):
+            r, c = divmod(idx, cols)
+            cb = ctk.CTkCheckBox(
+                check_frame, text=sheet, width=60,
+                font=ctk.CTkFont(size=12),
+            )
+            cb.grid(row=r, column=c, padx=5, pady=3, sticky="w")
+            self._sheet_checkboxes[sheet] = cb
+
+        # Botones de selección rápida + importar seleccionadas
+        btn_row = ctk.CTkFrame(center, fg_color="transparent")
+        btn_row.pack(pady=(0, 5))
+
+        ctk.CTkButton(
+            btn_row, text="Marcar todas", width=120, height=30,
+            font=ctk.CTkFont(size=11),
+            command=self._check_all_sheets,
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_row, text="Desmarcar todas", width=120, height=30,
+            font=ctk.CTkFont(size=11),
+            command=self._uncheck_all_sheets,
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            center, text="📥  Importar hojas seleccionadas",
+            width=280, height=38,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#2B7A2B",
+            command=self._select_chosen_sheets,
+        ).pack(pady=(5, 0))
+
+    def _check_all_sheets(self) -> None:
+        """Marca todos los checkboxes de hojas."""
+        for cb in self._sheet_checkboxes.values():
+            cb.select()
+
+    def _uncheck_all_sheets(self) -> None:
+        """Desmarca todos los checkboxes de hojas."""
+        for cb in self._sheet_checkboxes.values():
+            cb.deselect()
+
+    def _select_all_sheets(self) -> None:
+        """Selecciona todas las hojas y lanza el preview."""
+        self._selected_sheets = None  # None = todas
+        thread = threading.Thread(target=self._load_preview, daemon=True)
+        thread.start()
+
+    def _select_chosen_sheets(self) -> None:
+        """Selecciona las hojas marcadas y lanza el preview."""
+        chosen = [
+            name for name, cb in self._sheet_checkboxes.items()
+            if cb.get() == 1
+        ]
+        if not chosen:
+            self._show_msg("⚠️ Seleccione al menos una hoja")
+            return
+        self._selected_sheets = chosen
         thread = threading.Thread(target=self._load_preview, daemon=True)
         thread.start()
 
@@ -177,11 +303,14 @@ class ImportView(ctk.CTkFrame):
         try:
             from utils.excel_parser import ExcelParser
 
-            parser = ExcelParser(self._file_path)
+            parser = ExcelParser(self._file_path, selected_sheets=self._selected_sheets)
             result = parser.parse()
 
             self._all_data = result.get("valid_rows", [])
-            self._preview_data = self._all_data[:PREVIEW_ROWS]
+            # Usar datos crudos del Excel para la vista previa
+            self._preview_data = result.get("raw_preview", [])
+            if not self._preview_data:
+                self._preview_data = self._all_data[:PREVIEW_ROWS]
             self._import_summary = {
                 "total_rows": result.get("total_rows", 0),
                 "valid": len(self._all_data),
@@ -230,21 +359,8 @@ class ImportView(ctk.CTkFrame):
         ).pack(fill="x", padx=15, pady=(10, 5))
 
         if self._preview_data:
-            # Unificar DNI y Pasaporte en columna "Documento"
-            for rec in self._preview_data:
-                dni = rec.pop("dni", None) or ""
-                pas = rec.pop("pasaporte", None) or ""
-                if dni and pas:
-                    rec["documento"] = f"DNI: {dni} / PAS: {pas}"
-                elif dni:
-                    rec["documento"] = f"DNI: {dni}"
-                elif pas:
-                    rec["documento"] = f"PAS: {pas}"
-                else:
-                    rec["documento"] = "S/N"
-
             columns = [c for c in self._preview_data[0].keys() if not c.startswith("_")]
-            col_defs = [(col, col.replace("_", " ").title(), 120) for col in columns]
+            col_defs = [(col, col, 120) for col in columns]
 
             table = DataTable(preview_frame, columns=col_defs, page_size=PREVIEW_ROWS)
             table.pack(fill="both", expand=True, padx=10, pady=(0, 10))

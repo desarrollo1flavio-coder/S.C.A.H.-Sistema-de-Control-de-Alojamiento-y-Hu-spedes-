@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from config.settings import COLUMNAS_IGNORAR, COLUMNAS_MAPEO, MAX_IMPORT_ROWS
+from config.settings import COLUMNAS_IGNORAR, COLUMNAS_MAPEO, MAX_IMPORT_ROWS, PREVIEW_ROWS
 from utils.logger import get_logger
 from utils.validators import sanitizar_texto
 
@@ -20,16 +20,51 @@ logger = get_logger("utils.excel_parser")
 class ExcelParser:
     """Parser de archivos Excel con mapeo automático de columnas."""
 
-    def __init__(self, file_path: Path) -> None:
+    def __init__(self, file_path: Path, selected_sheets: Optional[list[str]] = None) -> None:
         """Inicializa el parser.
 
         Args:
             file_path: Ruta al archivo Excel.
+            selected_sheets: Lista de nombres de hojas a procesar.
+                Si es None, se procesan todas las hojas numéricas.
         """
         self._file_path = Path(file_path)
+        self._selected_sheets = selected_sheets
         self._column_map: dict[str, str] = {}
         self._sheet_count: int = 0
         self._sheet_names: list[str] = []
+        self._raw_frames: list[pd.DataFrame] = []
+
+    @staticmethod
+    def list_sheets(file_path: Path) -> list[str]:
+        """Lista las hojas numéricas disponibles en un archivo Excel.
+
+        Args:
+            file_path: Ruta al archivo Excel.
+
+        Returns:
+            Lista de nombres de hojas numéricas ordenadas.
+        """
+        file_path = Path(file_path)
+        suffix = file_path.suffix.lower()
+        engine = "openpyxl" if suffix == ".xlsx" else "xlrd"
+
+        if engine == "xlrd":
+            import xlrd
+            wb = xlrd.open_workbook(str(file_path), on_demand=True)
+            all_names = wb.sheet_names()
+            wb.release_resources()
+        else:
+            from openpyxl import load_workbook
+            wb = load_workbook(str(file_path), read_only=True)
+            all_names = wb.sheetnames
+            wb.close()
+
+        # Filtrar solo hojas con nombre numérico
+        numeric = [n for n in all_names if str(n).strip().isdigit()]
+        # Ordenar numéricamente
+        numeric.sort(key=lambda x: int(str(x).strip()))
+        return numeric
 
     def parse(self) -> dict:
         """Lee y procesa el archivo Excel.
@@ -96,6 +131,30 @@ class ExcelParser:
             except Exception as e:
                 errors.append({"row": row_label, "error": str(e)})
 
+        # Construir raw_preview (datos crudos del Excel para la vista previa)
+        # Muestreo round-robin: 1 fila por hoja para mostrar variedad
+        raw_preview: list[dict] = []
+        if self._raw_frames:
+            try:
+                # Tomar 1 fila válida de cada hoja en round-robin
+                sampled: list[pd.DataFrame] = []
+                for rf in self._raw_frames:
+                    # Filtrar filas vacías (excluir columna "Hoja" del chequeo)
+                    data_cols = [c for c in rf.columns if c != "Hoja"]
+                    valid_mask = rf[data_cols].astype(str).apply(
+                        lambda x: x.str.strip().str.len().sum(), axis=1,
+                    ) > 0
+                    valid_rows_rf = rf[valid_mask]
+                    if not valid_rows_rf.empty:
+                        sampled.append(valid_rows_rf.head(1))
+
+                if sampled:
+                    sample_df = pd.concat(sampled, ignore_index=True, sort=False)
+                    sample_df = sample_df.fillna("")
+                    raw_preview = sample_df.head(PREVIEW_ROWS).to_dict(orient="records")
+            except Exception:
+                raw_preview = []
+
         result = {
             "total_rows": total_rows,
             "valid_rows": valid_rows,
@@ -105,6 +164,7 @@ class ExcelParser:
             "column_mapping": self._column_map,
             "sheet_count": self._sheet_count,
             "sheet_names": self._sheet_names,
+            "raw_preview": raw_preview,
         }
 
         logger.info(
@@ -144,10 +204,38 @@ class ExcelParser:
                 self._sheet_count, self._sheet_names,
             )
 
+            # Filtrar solo hojas con nombre numérico (contienen datos de huéspedes)
+            hojas_numericas = {}
+            hojas_ignoradas = []
+            for name, df_sheet in all_sheets.items():
+                name_str = str(name).strip()
+                if name_str.isdigit():
+                    hojas_numericas[name] = df_sheet
+                else:
+                    hojas_ignoradas.append(name_str)
+            if hojas_ignoradas:
+                logger.info(
+                    "Hojas ignoradas (nombre no numérico): %s", hojas_ignoradas,
+                )
+
+            # Filtrar por hojas seleccionadas (si se especificaron)
+            if self._selected_sheets is not None:
+                sel_set = {str(s).strip() for s in self._selected_sheets}
+                hojas_filtradas = {}
+                for name, df_sheet in hojas_numericas.items():
+                    if str(name).strip() in sel_set:
+                        hojas_filtradas[name] = df_sheet
+                logger.info(
+                    "Hojas seleccionadas: %s de %d disponibles",
+                    list(sel_set), len(hojas_numericas),
+                )
+                hojas_numericas = hojas_filtradas
+
             all_mappings: dict[str, str] = {}
             frames: list[pd.DataFrame] = []
+            self._raw_frames = []
 
-            for sheet_name, sheet_df in all_sheets.items():
+            for sheet_name, sheet_df in hojas_numericas.items():
                 if sheet_df.empty:
                     logger.info("Hoja '%s' vacía, omitida", sheet_name)
                     continue
@@ -173,6 +261,33 @@ class ExcelParser:
                 sheet_cols = [c for c in sheet_df.columns.tolist() if not c.startswith("_")]
                 sheet_map = self._auto_map_columns(sheet_cols)
                 all_mappings.update(sheet_map)
+
+                # Guardar copia RAW con headers legibles (Title Case) para preview
+                import unicodedata
+
+                def _normalize_ignore(text: str) -> str:
+                    t = text.strip().lower().replace(" ", "_")
+                    nfkd = unicodedata.normalize("NFKD", t)
+                    return nfkd.encode("ascii", "ignore").decode("ascii").replace(".", "").replace("°", "").replace("º", "")
+
+                ignorar_norm = [_normalize_ignore(ig) for ig in COLUMNAS_IGNORAR]
+                # Columnas con nombre original legible, excluyendo las ignoradas y las internas
+                raw_cols = []
+                for c in sheet_df.columns:
+                    if c.startswith("_"):
+                        continue
+                    if _normalize_ignore(c) in ignorar_norm:
+                        continue
+                    raw_cols.append(c)
+                raw_copy = sheet_df[raw_cols].copy()
+                # Renombrar a Title Case legible: "apellido_y_nombre" → "Apellido Y Nombre"
+                raw_copy.columns = [
+                    str(c).replace("_", " ").strip().title() for c in raw_copy.columns
+                ]
+                # Agregar columna "Hoja" con el número de hoja de origen
+                raw_copy.insert(0, "Hoja", str(sheet_name))
+                self._raw_frames.append(raw_copy)
+
                 sheet_df = sheet_df.rename(columns=sheet_map)
 
                 sheet_df = sheet_df.copy()
@@ -186,6 +301,8 @@ class ExcelParser:
                 )
 
             self._column_map = all_mappings
+            self._sheet_count = len(frames)  # Solo hojas numéricas con datos
+            self._sheet_names = [str(f["_hoja_origen"].iloc[0]) for f in frames if len(f) > 0]
 
             if not frames:
                 logger.warning("Ninguna hoja contiene datos")
