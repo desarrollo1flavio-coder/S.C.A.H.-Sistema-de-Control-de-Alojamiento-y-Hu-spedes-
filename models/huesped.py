@@ -32,7 +32,8 @@ class HuespedSchema(BaseModel):
     edad: Optional[int] = Field(default=None, gt=0, lt=150)
     fecha_nacimiento: Optional[date] = None
     profesion: Optional[str] = Field(default=None, max_length=100)
-    habitacion: str = Field(..., min_length=1, max_length=20)
+    establecimiento: Optional[str] = Field(default=None, max_length=150)
+    habitacion: Optional[str] = Field(default="S/N", max_length=20)
     destino: Optional[str] = Field(default=None, max_length=200)
     vehiculo_tiene: bool = Field(default=False)
     vehiculo_datos: Optional[str] = Field(default=None, max_length=200)
@@ -104,9 +105,9 @@ class HuespedDAO:
             cursor = conn.execute(
                 "INSERT INTO huespedes "
                 "(nacionalidad, procedencia, apellido, nombre, dni, pasaporte, "
-                "edad, fecha_nacimiento, profesion, habitacion, destino, vehiculo_tiene, "
-                "vehiculo_datos, telefono, fecha_entrada, fecha_salida, usuario_carga) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "edad, fecha_nacimiento, profesion, establecimiento, habitacion, destino, "
+                "vehiculo_tiene, vehiculo_datos, telefono, fecha_entrada, fecha_salida, usuario_carga) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     datos["nacionalidad"],
                     datos["procedencia"],
@@ -117,7 +118,8 @@ class HuespedDAO:
                     datos.get("edad"),
                     str(datos["fecha_nacimiento"]) if datos.get("fecha_nacimiento") else None,
                     datos.get("profesion"),
-                    datos["habitacion"],
+                    datos.get("establecimiento"),
+                    datos.get("habitacion", "S/N"),
                     datos.get("destino"),
                     1 if datos.get("vehiculo_tiene") else 0,
                     datos.get("vehiculo_datos"),
@@ -167,8 +169,8 @@ class HuespedDAO:
         """
         campos_permitidos = [
             "nacionalidad", "procedencia", "apellido", "nombre", "dni", "pasaporte",
-            "edad", "fecha_nacimiento", "profesion", "habitacion", "destino",
-            "vehiculo_tiene", "vehiculo_datos", "telefono", "fecha_entrada",
+            "edad", "fecha_nacimiento", "profesion", "establecimiento", "habitacion",
+            "destino", "vehiculo_tiene", "vehiculo_datos", "telefono", "fecha_entrada",
             "fecha_salida",
         ]
         campos: list[str] = []
@@ -248,11 +250,17 @@ class HuespedDAO:
             return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
-    def buscar_rapida(termino: str, limite: int = PAGINATION_SIZE) -> list[dict]:
-        """Búsqueda rápida en DNI, Pasaporte, Apellido y Nombre.
+    def buscar_rapida(
+        termino: str,
+        campo: Optional[str] = None,
+        limite: int = PAGINATION_SIZE,
+    ) -> list[dict]:
+        """Búsqueda rápida en uno o varios campos.
 
         Args:
             termino: Texto a buscar.
+            campo: Campo específico (dni, pasaporte, apellido, nombre, nacionalidad,
+                   establecimiento, habitacion). Si es None, busca en todos.
             limite: Máximo de resultados.
 
         Returns:
@@ -263,12 +271,21 @@ class HuespedDAO:
 
         termino_like = f"%{termino.strip()}%"
         with get_connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM huespedes WHERE activo = 1 AND ("
-                "dni LIKE ? OR pasaporte LIKE ? OR apellido LIKE ? OR nombre LIKE ?"
-                ") ORDER BY fecha_entrada DESC LIMIT ?",
-                (termino_like, termino_like, termino_like, termino_like, limite),
-            )
+            if campo and campo in (
+                "dni", "pasaporte", "apellido", "nombre",
+                "nacionalidad", "establecimiento", "habitacion",
+            ):
+                # Búsqueda en campo específico
+                query = f"SELECT * FROM huespedes WHERE activo = 1 AND {campo} LIKE ? ORDER BY fecha_entrada DESC LIMIT ?"
+                cursor = conn.execute(query, (termino_like, limite))
+            else:
+                # Búsqueda en todos los campos principales
+                cursor = conn.execute(
+                    "SELECT * FROM huespedes WHERE activo = 1 AND ("
+                    "dni LIKE ? OR pasaporte LIKE ? OR apellido LIKE ? OR nombre LIKE ?"
+                    ") ORDER BY fecha_entrada DESC LIMIT ?",
+                    (termino_like, termino_like, termino_like, termino_like, limite),
+                )
             return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
@@ -373,10 +390,10 @@ class HuespedDAO:
                     conn.execute(
                         "INSERT INTO huespedes "
                         "(nacionalidad, procedencia, apellido, nombre, dni, pasaporte, "
-                        "edad, fecha_nacimiento, profesion, habitacion, destino, "
-                        "vehiculo_tiene, vehiculo_datos, telefono, fecha_entrada, "
+                        "edad, fecha_nacimiento, profesion, establecimiento, habitacion, "
+                        "destino, vehiculo_tiene, vehiculo_datos, telefono, fecha_entrada, "
                         "fecha_salida, usuario_carga) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             datos["nacionalidad"],
                             datos["procedencia"],
@@ -387,7 +404,8 @@ class HuespedDAO:
                             datos.get("edad"),
                             str(datos["fecha_nacimiento"]) if datos.get("fecha_nacimiento") else None,
                             datos.get("profesion"),
-                            datos["habitacion"],
+                            datos.get("establecimiento"),
+                            datos.get("habitacion", "S/N"),
                             datos.get("destino"),
                             1 if datos.get("vehiculo_tiene") else 0,
                             datos.get("vehiculo_datos"),

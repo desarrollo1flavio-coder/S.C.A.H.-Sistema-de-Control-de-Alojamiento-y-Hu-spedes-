@@ -136,31 +136,40 @@ class ManualView(ctk.CTkFrame):
         """
         section = self._section(parent, "Datos de Estadía")
 
+        row0 = ctk.CTkFrame(section, fg_color="transparent")
+        row0.pack(fill="x", pady=2)
+        row0.columnconfigure((0, 1), weight=1)
+
+        self._fields["establecimiento"] = self._add_field(
+            row0, "Establecimiento", ValidatedEntry, 0, 0,
+            placeholder="Ej: Hotel Bicentenario",
+        )
+        self._fields["habitacion"] = self._add_field(
+            row0, "Habitación", ValidatedEntry, 0, 1,
+            placeholder="Ej: 201",
+        )
+
         row1 = ctk.CTkFrame(section, fg_color="transparent")
         row1.pack(fill="x", pady=2)
         row1.columnconfigure((0, 1, 2), weight=1)
 
-        self._fields["habitacion"] = self._add_field(
-            row1, "Habitación *", ValidatedEntry, 0, 0,
-            placeholder="Ej: 201",
-        )
         self._fields["fecha_entrada"] = self._add_date(
-            row1, "Fecha Entrada *", 0, 1,
+            row1, "Fecha Entrada *", 0, 0,
         )
         self._fields["fecha_salida"] = self._add_date(
-            row1, "Fecha Salida", 0, 2,
+            row1, "Fecha Salida", 0, 1,
+        )
+        self._fields["destino"] = self._add_field(
+            row1, "Destino", ValidatedEntry, 0, 2,
+            placeholder="Ej: Buenos Aires",
         )
 
         row2 = ctk.CTkFrame(section, fg_color="transparent")
         row2.pack(fill="x", pady=2)
         row2.columnconfigure((0, 1), weight=1)
 
-        self._fields["destino"] = self._add_field(
-            row2, "Destino", ValidatedEntry, 0, 0,
-            placeholder="Ej: Buenos Aires",
-        )
         self._fields["profesion"] = self._add_field(
-            row2, "Profesión", ValidatedEntry, 0, 1,
+            row2, "Profesión", ValidatedEntry, 0, 0,
             placeholder="Ej: Comerciante",
         )
 
@@ -360,8 +369,8 @@ class ManualView(ctk.CTkFrame):
         data: dict = {}
 
         for key in ("apellido", "nombre", "dni", "pasaporte", "edad",
-                     "fecha_nacimiento", "habitacion", "destino",
-                     "profesion", "telefono"):
+                     "fecha_nacimiento", "establecimiento", "habitacion",
+                     "destino", "profesion", "telefono"):
             field = self._fields.get(key)
             if field and hasattr(field, "get"):
                 val = field.get().strip()
@@ -418,7 +427,7 @@ class ManualView(ctk.CTkFrame):
 
         # Validaciones básicas en la UI
         missing = []
-        for field in ("apellido", "nombre", "nacionalidad", "procedencia", "habitacion"):
+        for field in ("apellido", "nombre", "nacionalidad", "procedencia"):
             if field not in data or not data.get(field):
                 missing.append(field.capitalize())
 

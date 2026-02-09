@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS huespedes (
     edad            INTEGER CHECK(edad IS NULL OR (edad > 0 AND edad < 150)),
     fecha_nacimiento DATE,
     profesion       TEXT,
+    establecimiento TEXT,
     habitacion      TEXT    NOT NULL,
     destino         TEXT,
     vehiculo_tiene  BOOLEAN DEFAULT 0,

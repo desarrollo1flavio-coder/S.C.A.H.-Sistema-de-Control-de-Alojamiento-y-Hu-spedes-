@@ -86,8 +86,26 @@ class SearchView(ctk.CTkFrame):
             inner, text="🔍", font=ctk.CTkFont(size=16),
         ).pack(side="left", padx=(0, 8))
 
+        # Selector de campo de búsqueda
+        self._search_field_options = {
+            "Todos": None,
+            "DNI": "dni",
+            "Pasaporte": "pasaporte",
+            "Apellido": "apellido",
+            "Nombre": "nombre",
+            "Nacionalidad": "nacionalidad",
+            "Establecimiento": "establecimiento",
+            "Habitación": "habitacion",
+        }
+        self._search_field = ctk.CTkComboBox(
+            inner, values=list(self._search_field_options.keys()),
+            width=130, height=38, state="readonly",
+        )
+        self._search_field.set("Todos")
+        self._search_field.pack(side="left", padx=(0, 8))
+
         self._search_entry = ctk.CTkEntry(
-            inner, placeholder_text="Buscar por DNI, pasaporte, apellido o nombre...",
+            inner, placeholder_text="Ingrese el término de búsqueda...",
             height=38, font=ctk.CTkFont(size=13),
         )
         self._search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
@@ -297,8 +315,12 @@ class SearchView(ctk.CTkFrame):
             self._update_action_buttons(False)
             return
 
+        # Obtener campo seleccionado
+        field_label = self._search_field.get()
+        campo = self._search_field_options.get(field_label)
+
         try:
-            results = self._controller.buscar_rapida(query)
+            results = self._controller.buscar_rapida(query, campo=campo)
             self._display_results(results)
         except Exception as e:
             logger.error("Error en búsqueda rápida: %s", e)
@@ -491,6 +513,7 @@ class SearchView(ctk.CTkFrame):
             ("Edad", "edad"),
             ("Fecha Nacimiento", "fecha_nacimiento"),
             ("Profesión", "profesion"),
+            ("Establecimiento", "establecimiento"),
             ("Habitación", "habitacion"),
             ("Destino", "destino"),
             ("Teléfono", "telefono"),

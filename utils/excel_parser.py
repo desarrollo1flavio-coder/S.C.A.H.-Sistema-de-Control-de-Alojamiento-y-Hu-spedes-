@@ -36,14 +36,15 @@ class ExcelParser:
         self._raw_frames: list[pd.DataFrame] = []
 
     @staticmethod
-    def list_sheets(file_path: Path) -> list[str]:
-        """Lista las hojas numéricas disponibles en un archivo Excel.
+    def list_sheets(file_path: Path, only_numeric: bool = False) -> list[str]:
+        """Lista las hojas disponibles en un archivo Excel.
 
         Args:
             file_path: Ruta al archivo Excel.
+            only_numeric: Si True, solo retorna hojas con nombres numéricos.
 
         Returns:
-            Lista de nombres de hojas numéricas ordenadas.
+            Lista de nombres de hojas.
         """
         file_path = Path(file_path)
         suffix = file_path.suffix.lower()
@@ -60,11 +61,15 @@ class ExcelParser:
             all_names = wb.sheetnames
             wb.close()
 
-        # Filtrar solo hojas con nombre numérico
-        numeric = [n for n in all_names if str(n).strip().isdigit()]
-        # Ordenar numéricamente
-        numeric.sort(key=lambda x: int(str(x).strip()))
-        return numeric
+        if only_numeric:
+            # Filtrar solo hojas con nombre numérico
+            result = [n for n in all_names if str(n).strip().isdigit()]
+            # Ordenar numéricamente
+            result.sort(key=lambda x: int(str(x).strip()))
+            return result
+
+        # Retornar todas las hojas en orden original
+        return list(all_names)
 
     def parse(self) -> dict:
         """Lee y procesa el archivo Excel.
@@ -204,38 +209,28 @@ class ExcelParser:
                 self._sheet_count, self._sheet_names,
             )
 
-            # Filtrar solo hojas con nombre numérico (contienen datos de huéspedes)
-            hojas_numericas = {}
-            hojas_ignoradas = []
-            for name, df_sheet in all_sheets.items():
-                name_str = str(name).strip()
-                if name_str.isdigit():
-                    hojas_numericas[name] = df_sheet
-                else:
-                    hojas_ignoradas.append(name_str)
-            if hojas_ignoradas:
-                logger.info(
-                    "Hojas ignoradas (nombre no numérico): %s", hojas_ignoradas,
-                )
-
-            # Filtrar por hojas seleccionadas (si se especificaron)
+            # Determinar qué hojas procesar
             if self._selected_sheets is not None:
+                # El usuario seleccionó hojas específicas: usar esas
                 sel_set = {str(s).strip() for s in self._selected_sheets}
-                hojas_filtradas = {}
-                for name, df_sheet in hojas_numericas.items():
+                hojas_a_procesar = {}
+                for name, df_sheet in all_sheets.items():
                     if str(name).strip() in sel_set:
-                        hojas_filtradas[name] = df_sheet
+                        hojas_a_procesar[name] = df_sheet
                 logger.info(
-                    "Hojas seleccionadas: %s de %d disponibles",
-                    list(sel_set), len(hojas_numericas),
+                    "Hojas seleccionadas por usuario: %s de %d disponibles",
+                    list(sel_set), len(all_sheets),
                 )
-                hojas_numericas = hojas_filtradas
+            else:
+                # Sin selección: procesar todas las hojas
+                hojas_a_procesar = dict(all_sheets)
+                logger.info("Procesando todas las hojas (%d)", len(hojas_a_procesar))
 
             all_mappings: dict[str, str] = {}
             frames: list[pd.DataFrame] = []
             self._raw_frames = []
 
-            for sheet_name, sheet_df in hojas_numericas.items():
+            for sheet_name, sheet_df in hojas_a_procesar.items():
                 if sheet_df.empty:
                     logger.info("Hoja '%s' vacía, omitida", sheet_name)
                     continue
@@ -418,8 +413,8 @@ class ExcelParser:
 
         # Campos de texto
         for field in ("apellido", "nombre", "nacionalidad", "procedencia",
-                       "profesion", "habitacion", "destino", "telefono",
-                       "vehiculo"):
+                       "profesion", "establecimiento", "habitacion", "destino",
+                       "telefono", "vehiculo"):
             # No sobrescribir apellido/nombre si ya se extrajeron del campo combinado
             if field in ("apellido", "nombre") and field in data and data[field]:
                 continue

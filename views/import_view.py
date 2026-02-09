@@ -42,6 +42,7 @@ class ImportView(ctk.CTkFrame):
         self._is_importing = False
         self._available_sheets: list[str] = []
         self._selected_sheets: Optional[list[str]] = None  # None = todas
+        self._import_mode = "skip"  # "skip", "update", "always"
 
         self._build_ui()
 
@@ -122,13 +123,42 @@ class ImportView(ctk.CTkFrame):
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.pack(fill="x", padx=30, pady=(5, 20))
 
+        # Mensaje de estado
         self._msg_label = ctk.CTkLabel(
             bar, text="", font=ctk.CTkFont(size=12),
         )
         self._msg_label.pack(side="left")
 
+        # Frame para botón y selector de modo
+        right_frame = ctk.CTkFrame(bar, fg_color="transparent")
+        right_frame.pack(side="right")
+
+        # Selector de modo de importación
+        mode_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        mode_frame.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(
+            mode_frame, text="Duplicados:",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray50", "gray60"),
+        ).pack(side="left", padx=(0, 5))
+
+        self._mode_var = ctk.StringVar(value="skip")
+        self._mode_combo = ctk.CTkComboBox(
+            mode_frame,
+            values=["Omitir", "Actualizar", "Importar siempre"],
+            variable=self._mode_var,
+            width=140,
+            height=30,
+            font=ctk.CTkFont(size=11),
+            command=self._on_mode_change,
+            state="disabled",
+        )
+        self._mode_combo.set("Omitir")
+        self._mode_combo.pack(side="left")
+
         self._import_btn = ctk.CTkButton(
-            bar, text="🚀  Importar Datos", width=160, height=38,
+            right_frame, text="🚀  Importar Datos", width=160, height=38,
             font=ctk.CTkFont(size=14, weight="bold"),
             command=self._handle_import, state="disabled",
         )
@@ -137,6 +167,15 @@ class ImportView(ctk.CTkFrame):
         self._progress = ctk.CTkProgressBar(bar, height=4)
         self._progress.pack(fill="x", side="bottom", pady=(10, 0))
         self._progress.set(0)
+
+    def _on_mode_change(self, choice: str) -> None:
+        """Actualiza el modo de importación según selección."""
+        mode_map = {
+            "Omitir": "skip",
+            "Actualizar": "update",
+            "Importar siempre": "always",
+        }
+        self._import_mode = mode_map.get(choice, "skip")
 
     # ── File Selection ───────────────────────────────────────────
 
@@ -171,11 +210,12 @@ class ImportView(ctk.CTkFrame):
         thread.start()
 
     def _load_sheet_list(self) -> None:
-        """Lee la lista de hojas numéricas del archivo en un hilo."""
+        """Lee la lista de hojas del archivo en un hilo."""
         self.after(0, lambda: self._show_msg("Leyendo hojas del archivo..."))
         try:
             from utils.excel_parser import ExcelParser
-            sheets = ExcelParser.list_sheets(self._file_path)
+            # Listar TODAS las hojas, no solo numéricas
+            sheets = ExcelParser.list_sheets(self._file_path, only_numeric=False)
             self._available_sheets = sheets
             self.after(0, self._show_sheet_selector)
         except Exception as e:
@@ -416,9 +456,10 @@ class ImportView(ctk.CTkFrame):
                     error_text.insert("end", f"{err}\n")
             error_text.configure(state="disabled")
 
-        # Enable import button
+        # Enable import button and mode selector
         if s.get("valid", 0) > 0:
             self._import_btn.configure(state="normal")
+            self._mode_combo.configure(state="normal")
             self._show_msg(
                 f"✅ {s['valid']} registros listos para importar",
                 error=False,
@@ -434,10 +475,19 @@ class ImportView(ctk.CTkFrame):
             return
 
         valid_count = len(self._all_data)
+
+        # Mensaje según modo
+        mode_msgs = {
+            "skip": "Los registros duplicados serán OMITIDOS.",
+            "update": "Los registros duplicados serán ACTUALIZADOS.",
+            "always": "TODOS los registros serán importados\n(puede crear duplicados).",
+        }
+        mode_msg = mode_msgs.get(self._import_mode, mode_msgs["skip"])
+
         confirm = messagebox.askyesno(
             "Confirmar Importación",
             f"¿Importar {valid_count} registros a la base de datos?\n\n"
-            "Los registros duplicados serán omitidos.",
+            f"{mode_msg}",
             parent=self,
         )
         if not confirm:
@@ -445,6 +495,7 @@ class ImportView(ctk.CTkFrame):
 
         self._is_importing = True
         self._import_btn.configure(state="disabled", text="Importando...")
+        self._mode_combo.configure(state="disabled")
 
         thread = threading.Thread(target=self._import_thread, daemon=True)
         thread.start()
@@ -452,58 +503,102 @@ class ImportView(ctk.CTkFrame):
     def _import_thread(self) -> None:
         """Hilo de importación."""
         from controllers.huesped_controller import HuespedController
+        from utils.exceptions import DuplicateRecordError
 
         controller = HuespedController(self._session)
         total = len(self._all_data)
-        ok, errors = 0, 0
+        nuevos, actualizados, omitidos, errores = 0, 0, 0, 0
+        mode = self._import_mode
 
         for i, row in enumerate(self._all_data, 1):
             try:
                 row["usuario_carga"] = self._session.username
-                controller.crear(row)
-                ok += 1
+
+                if mode == "skip":
+                    # Modo omitir: usar crear normal (falla si duplicado)
+                    controller.crear(row)
+                    nuevos += 1
+
+                elif mode == "update":
+                    # Modo actualizar: crear o actualizar si existe
+                    result = controller.crear_o_actualizar(row)
+                    if result == "created":
+                        nuevos += 1
+                    elif result == "updated":
+                        actualizados += 1
+                    else:
+                        omitidos += 1
+
+                elif mode == "always":
+                    # Modo siempre: forzar creación sin verificar duplicados
+                    controller.crear_sin_verificar(row)
+                    nuevos += 1
+
+            except DuplicateRecordError:
+                omitidos += 1
             except Exception as e:
-                errors += 1
+                errores += 1
                 logger.warning("Error al importar fila %d: %s", i, e)
 
             # Actualizar progreso
             progress = i / total
+            ok_total = nuevos + actualizados
             self.after(0, lambda p=progress: self._progress.set(p))
             self.after(
                 0,
-                lambda o=ok, e=errors, i_=i: self._show_msg(
-                    f"Importando... {i_}/{total} — ✅ {o} — ❌ {e}",
+                lambda n=nuevos, u=actualizados, o=omitidos, e=errores, i_=i: self._show_msg(
+                    f"Importando... {i_}/{total} — ✅{n} 🔄{u} ⏭️{o} ❌{e}",
                     error=False,
                 ),
             )
 
         # Finalizar
-        self.after(0, lambda: self._import_complete(ok, errors))
+        self.after(0, lambda: self._import_complete(nuevos, actualizados, omitidos, errores))
 
-    def _import_complete(self, ok: int, errors: int) -> None:
+    def _import_complete(self, nuevos: int, actualizados: int, omitidos: int, errores: int) -> None:
         """Completa la importación.
 
         Args:
-            ok: Registros importados.
-            errors: Registros con error.
+            nuevos: Registros nuevos creados.
+            actualizados: Registros actualizados.
+            omitidos: Registros omitidos (duplicados).
+            errores: Registros con error.
         """
         self._is_importing = False
         self._import_btn.configure(text="🚀  Importar Datos")
+        self._mode_combo.configure(state="normal")
         self._progress.set(1)
 
-        if errors == 0:
+        total_ok = nuevos + actualizados
+        partes = []
+        if nuevos > 0:
+            partes.append(f"{nuevos} nuevos")
+        if actualizados > 0:
+            partes.append(f"{actualizados} actualizados")
+        if omitidos > 0:
+            partes.append(f"{omitidos} omitidos")
+        if errores > 0:
+            partes.append(f"{errores} errores")
+
+        resumen = ", ".join(partes) if partes else "sin cambios"
+
+        if errores == 0 and total_ok > 0:
             self._show_msg(
-                f"✅ Importación completa: {ok} registros importados",
+                f"✅ Importación completa: {resumen}",
                 error=False,
+            )
+        elif total_ok > 0:
+            self._show_msg(
+                f"⚠️ Importación finalizada: {resumen}",
             )
         else:
             self._show_msg(
-                f"⚠️ Importación finalizada: {ok} importados, {errors} errores",
+                f"⚠️ Sin registros importados: {resumen}",
             )
 
         logger.info(
-            "Importación completada: %d OK, %d errores — usuario: %s",
-            ok, errors, self._session.username,
+            "Importación completada: %d nuevos, %d actualizados, %d omitidos, %d errores — usuario: %s",
+            nuevos, actualizados, omitidos, errores, self._session.username,
         )
 
     def _show_msg(self, msg: str, error: bool = True) -> None:

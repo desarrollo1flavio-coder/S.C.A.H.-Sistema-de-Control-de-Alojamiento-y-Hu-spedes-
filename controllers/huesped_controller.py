@@ -84,6 +84,127 @@ class HuespedController:
         )
         return huesped_id
 
+    def crear_o_actualizar(self, datos: dict) -> str:
+        """Crea un nuevo registro o actualiza si el documento ya existe.
+
+        Args:
+            datos: Diccionario con los datos del huésped.
+
+        Returns:
+            "created" si se creó nuevo, "updated" si se actualizó, "skipped" si hubo error.
+
+        Raises:
+            ValidationError: Si los datos no son válidos.
+            PermissionDeniedError: Si el usuario no tiene permisos.
+        """
+        if not self._session.tiene_permiso("escritura"):
+            raise PermissionDeniedError()
+
+        datos["usuario_carga"] = self._session.username
+
+        # Validar con Pydantic
+        try:
+            schema = HuespedSchema(**datos)
+            datos_validados = schema.model_dump()
+        except Exception as e:
+            logger.warning("Validación fallida: %s", e)
+            raise ValidationError(str(e)) from e
+
+        # Buscar si existe
+        existentes = HuespedDAO.buscar_por_documento(
+            dni=datos_validados.get("dni"),
+            pasaporte=datos_validados.get("pasaporte"),
+        )
+
+        if existentes:
+            # Actualizar el más reciente
+            huesped_existente = existentes[0]
+            huesped_id = huesped_existente["id"]
+            HuespedDAO.actualizar(huesped_id, datos_validados)
+
+            AuditoriaDAO.registrar(
+                usuario=self._session.username,
+                accion="UPDATE",
+                tabla_afectada="huespedes",
+                registro_id=huesped_id,
+                datos_anteriores=huesped_existente,
+                datos_nuevos=datos_validados,
+            )
+
+            logger.info(
+                "Huésped actualizado por %s: ID %d",
+                self._session.username,
+                huesped_id,
+            )
+            return "updated"
+        else:
+            # Crear nuevo
+            huesped_id = HuespedDAO.crear(datos_validados)
+
+            AuditoriaDAO.registrar(
+                usuario=self._session.username,
+                accion="INSERT",
+                tabla_afectada="huespedes",
+                registro_id=huesped_id,
+                datos_nuevos=datos_validados,
+            )
+
+            logger.info(
+                "Huésped creado por %s: %s %s (ID: %d)",
+                self._session.username,
+                datos_validados["apellido"],
+                datos_validados["nombre"],
+                huesped_id,
+            )
+            return "created"
+
+    def crear_sin_verificar(self, datos: dict) -> int:
+        """Crea un registro sin verificar duplicados (permite múltiples entradas).
+
+        Args:
+            datos: Diccionario con los datos del huésped.
+
+        Returns:
+            ID del huésped creado.
+
+        Raises:
+            ValidationError: Si los datos no son válidos.
+            PermissionDeniedError: Si el usuario no tiene permisos.
+        """
+        if not self._session.tiene_permiso("escritura"):
+            raise PermissionDeniedError()
+
+        datos["usuario_carga"] = self._session.username
+
+        # Validar con Pydantic
+        try:
+            schema = HuespedSchema(**datos)
+            datos_validados = schema.model_dump()
+        except Exception as e:
+            logger.warning("Validación fallida: %s", e)
+            raise ValidationError(str(e)) from e
+
+        # Crear directamente sin verificar duplicados
+        huesped_id = HuespedDAO.crear(datos_validados)
+
+        AuditoriaDAO.registrar(
+            usuario=self._session.username,
+            accion="INSERT",
+            tabla_afectada="huespedes",
+            registro_id=huesped_id,
+            datos_nuevos=datos_validados,
+            detalles="Importación sin verificación de duplicados",
+        )
+
+        logger.info(
+            "Huésped creado (sin verificar) por %s: %s %s (ID: %d)",
+            self._session.username,
+            datos_validados["apellido"],
+            datos_validados["nombre"],
+            huesped_id,
+        )
+        return huesped_id
+
     def obtener(self, huesped_id: int) -> Optional[dict]:
         """Obtiene un huésped por ID.
 
@@ -162,18 +283,19 @@ class HuespedController:
 
         return resultado
 
-    def buscar_rapida(self, termino: str) -> list[dict]:
-        """Búsqueda rápida en DNI, pasaporte, apellido y nombre.
+    def buscar_rapida(self, termino: str, campo: str | None = None) -> list[dict]:
+        """Búsqueda rápida en uno o varios campos.
 
         Args:
             termino: Texto a buscar.
+            campo: Campo específico o None para buscar en todos.
 
         Returns:
             Lista de huéspedes encontrados.
         """
         if not self._session.tiene_permiso("lectura"):
             raise PermissionDeniedError()
-        return HuespedDAO.buscar_rapida(termino)
+        return HuespedDAO.buscar_rapida(termino, campo=campo)
 
     def buscar_avanzada(
         self,
