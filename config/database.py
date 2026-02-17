@@ -6,6 +6,7 @@ ejecución de migraciones y operaciones de mantenimiento.
 
 import shutil
 import sqlite3
+import re
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,57 @@ from utils.exceptions import DatabaseConnectionError, MigrationError
 from utils.logger import get_logger
 
 logger = get_logger("database")
+
+
+def _extract_add_column_targets(sql_content: str) -> dict[str, set[str]]:
+    """Extrae objetivos de sentencias ALTER TABLE ... ADD COLUMN del SQL.
+
+    Returns:
+        Diccionario con clave=columna (lowercase) y valor=set de tablas (lowercase).
+    """
+    pattern = re.compile(
+        r"ALTER\s+TABLE\s+([\w\"]+)\s+ADD\s+COLUMN\s+([\w\"]+)",
+        flags=re.IGNORECASE,
+    )
+    targets: dict[str, set[str]] = {}
+    for table_name, column_name in pattern.findall(sql_content):
+        table = table_name.strip('"').lower()
+        column = column_name.strip('"').lower()
+        targets.setdefault(column, set()).add(table)
+    return targets
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """Verifica si una columna existe en una tabla dada."""
+    cursor = conn.execute(f'PRAGMA table_info("{table}")')
+    return any(row["name"].lower() == column.lower() for row in cursor.fetchall())
+
+
+def _is_skippable_migration_error(
+    conn: sqlite3.Connection,
+    sql_content: str,
+    error: sqlite3.Error,
+) -> bool:
+    """Determina si un error de migración es seguro de omitir.
+
+    Actualmente permite omitir únicamente el caso de columna duplicada,
+    siempre que la columna ya exista en la tabla objetivo declarada en el SQL.
+    """
+    error_text = str(error).lower()
+    marker = "duplicate column name:"
+    if marker not in error_text:
+        return False
+
+    duplicate_column = error_text.split(marker, maxsplit=1)[-1].strip().strip('"').lower()
+    if not duplicate_column:
+        return False
+
+    targets = _extract_add_column_targets(sql_content)
+    target_tables = targets.get(duplicate_column, set())
+    if not target_tables:
+        return False
+
+    return all(_column_exists(conn, table, duplicate_column) for table in target_tables)
 
 
 @contextmanager
@@ -126,7 +178,17 @@ def initialize_database() -> None:
 
                 logger.info("Aplicando migración: %s", migration_file.name)
                 sql_content = migration_file.read_text(encoding="utf-8")
-                conn.executescript(sql_content)
+                try:
+                    conn.executescript(sql_content)
+                except sqlite3.Error as e:
+                    if _is_skippable_migration_error(conn, sql_content, e):
+                        logger.warning(
+                            "Migración %s marcada como aplicada: esquema ya contiene el cambio (%s)",
+                            migration_file.name,
+                            e,
+                        )
+                    else:
+                        raise
                 conn.execute(
                     "INSERT INTO _migraciones (archivo) VALUES (?)",
                     (migration_file.name,),
