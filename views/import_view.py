@@ -10,7 +10,7 @@ from typing import Optional
 
 import customtkinter as ctk
 
-from config.settings import ALLOWED_EXTENSIONS, PREVIEW_ROWS
+from config.settings import ALLOWED_EXTENSIONS, PAGINATION_SIZE
 from controllers.auth_controller import SessionInfo
 from utils.logger import get_logger
 from views.components.data_table import DataTable
@@ -38,6 +38,8 @@ class ImportView(ctk.CTkFrame):
         self._file_path: Optional[Path] = None
         self._preview_data: list[dict] = []
         self._all_data: list[dict] = []
+        self._error_details: list[dict] = []
+        self._duplicate_details: list[dict] = []
         self._import_summary: dict = {}
         self._is_importing = False
         self._available_sheets: list[str] = []
@@ -347,10 +349,12 @@ class ImportView(ctk.CTkFrame):
             result = parser.parse()
 
             self._all_data = result.get("valid_rows", [])
-            # Usar datos crudos del Excel para la vista previa
+            # Usar datos crudos COMPLETOS del Excel para la vista previa
             self._preview_data = result.get("raw_preview", [])
             if not self._preview_data:
-                self._preview_data = self._all_data[:PREVIEW_ROWS]
+                self._preview_data = self._all_data
+            self._error_details = result.get("errors", [])
+            self._duplicate_details = result.get("duplicates", [])
             self._import_summary = {
                 "total_rows": result.get("total_rows", 0),
                 "valid": len(self._all_data),
@@ -379,34 +383,144 @@ class ImportView(ctk.CTkFrame):
             self.after(0, lambda: self._progress.set(0))
 
     def _display_preview(self) -> None:
-        """Muestra la previsualización y resumen."""
+        """Muestra la previsualización completa con tabs de datos y errores."""
         for w in self._content_frame.winfo_children():
             w.destroy()
 
-        # Split: left (preview) + right (summary)
+        # Layout principal: left (tabview) + right (summary)
         self._content_frame.columnconfigure(0, weight=3)
         self._content_frame.columnconfigure(1, weight=1)
         self._content_frame.rowconfigure(0, weight=1)
 
-        # Preview table
-        preview_frame = ctk.CTkFrame(self._content_frame, corner_radius=10)
-        preview_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        # ── Tabview con Vista Previa y Errores ───────────────────
+        tabview = ctk.CTkTabview(self._content_frame, corner_radius=10)
+        tabview.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
 
+        tab_preview = tabview.add("📋 Datos a Importar")
+        tab_errors = tabview.add("⚠️ Errores y Detalles")
+
+        # ── TAB 1: Vista previa completa ─────────────────────────
+        total_preview = len(self._preview_data)
         ctk.CTkLabel(
-            preview_frame,
-            text=f"Vista previa ({min(PREVIEW_ROWS, len(self._all_data))} de {len(self._all_data)} registros)",
+            tab_preview,
+            text=f"Vista previa — {total_preview} registros del archivo Excel",
             font=ctk.CTkFont(size=13, weight="bold"),
-        ).pack(fill="x", padx=15, pady=(10, 5))
+        ).pack(fill="x", padx=10, pady=(5, 5))
 
         if self._preview_data:
             columns = [c for c in self._preview_data[0].keys() if not c.startswith("_")]
             col_defs = [(col, col, 120) for col in columns]
 
-            table = DataTable(preview_frame, columns=col_defs, page_size=PREVIEW_ROWS)
-            table.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+            table = DataTable(
+                tab_preview, columns=col_defs,
+                page_size=PAGINATION_SIZE,
+                show_pagination=True,
+            )
+            table.pack(fill="both", expand=True, padx=5, pady=(0, 5))
             table.load_data(self._preview_data)
 
-        # Summary panel
+        # ── TAB 2: Errores y Detalles ────────────────────────────
+        s = self._import_summary
+
+        # Sub-resumen de análisis
+        analysis_frame = ctk.CTkFrame(tab_errors, fg_color="transparent")
+        analysis_frame.pack(fill="x", padx=10, pady=(5, 10))
+
+        analysis_items = [
+            ("📋 Total filas leídas:", str(s.get("total_rows", 0))),
+            ("📊 Hojas procesadas:", f"{s.get('sheet_count', 1)} — {', '.join(s.get('sheet_names', []))}"),
+            ("✅ Registros válidos:", str(s.get("valid", 0))),
+            ("❌ Registros con errores:", str(s.get("errors", 0))),
+            ("⚠️ Duplicados en archivo:", str(s.get("duplicates", 0))),
+            ("⏭️ Filas vacías omitidas:", str(s.get("skipped", 0))),
+        ]
+
+        for label_text, value_text in analysis_items:
+            row_f = ctk.CTkFrame(analysis_frame, fg_color="transparent")
+            row_f.pack(fill="x", pady=1)
+            ctk.CTkLabel(
+                row_f, text=label_text,
+                font=ctk.CTkFont(size=12), anchor="w",
+            ).pack(side="left")
+            ctk.CTkLabel(
+                row_f, text=value_text,
+                font=ctk.CTkFont(size=12, weight="bold"), anchor="e",
+            ).pack(side="right")
+
+        # ── Tabla de errores ──────────────────────────────────────
+        error_list = self._error_details or []
+        if error_list:
+            ctk.CTkLabel(
+                tab_errors,
+                text=f"❌ Errores de validación ({len(error_list)})",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color=("#CC0000", "#FF6B6B"),
+            ).pack(fill="x", padx=10, pady=(5, 3))
+
+            error_rows = []
+            for err in error_list:
+                if isinstance(err, dict):
+                    error_rows.append({
+                        "Ubicación": str(err.get("row", "?")),
+                        "Error": str(err.get("error", "")),
+                    })
+                else:
+                    error_rows.append({"Ubicación": "?", "Error": str(err)})
+
+            error_col_defs = [
+                ("Ubicación", "Ubicación", 180),
+                ("Error", "Descripción del Error", 500),
+            ]
+            error_table = DataTable(
+                tab_errors, columns=error_col_defs,
+                page_size=20, show_pagination=True,
+            )
+            error_table.pack(fill="both", expand=True, padx=5, pady=(0, 5))
+            error_table.load_data(error_rows)
+        else:
+            ctk.CTkLabel(
+                tab_errors,
+                text="✅ No se detectaron errores de validación",
+                font=ctk.CTkFont(size=13),
+                text_color=("green", "#4ECB71"),
+            ).pack(fill="x", padx=10, pady=(10, 5))
+
+        # ── Tabla de duplicados ───────────────────────────────────
+        dup_list = self._duplicate_details or []
+        if dup_list:
+            ctk.CTkLabel(
+                tab_errors,
+                text=f"⚠️ Duplicados en el archivo ({len(dup_list)})",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color=("#CC6600", "#FFA500"),
+            ).pack(fill="x", padx=10, pady=(10, 3))
+
+            dup_rows = []
+            for dup in dup_list:
+                if isinstance(dup, dict):
+                    nombre = dup.get("apellido", "") + " " + dup.get("nombre", "")
+                    doc = dup.get("dni", "") or dup.get("pasaporte", "")
+                    hoja = dup.get("row", dup.get("_hoja_origen", "?"))
+                    dup_rows.append({
+                        "Ubicación": str(hoja),
+                        "Nombre": nombre.strip(),
+                        "Documento": str(doc),
+                    })
+
+            if dup_rows:
+                dup_col_defs = [
+                    ("Ubicación", "Ubicación", 150),
+                    ("Nombre", "Nombre", 250),
+                    ("Documento", "Documento", 150),
+                ]
+                dup_table = DataTable(
+                    tab_errors, columns=dup_col_defs,
+                    page_size=20, show_pagination=True,
+                )
+                dup_table.pack(fill="both", expand=True, padx=5, pady=(0, 5))
+                dup_table.load_data(dup_rows)
+
+        # ── Summary panel (derecha) ──────────────────────────────
         summary_frame = ctk.CTkFrame(self._content_frame, corner_radius=10)
         summary_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
@@ -415,7 +529,6 @@ class ImportView(ctk.CTkFrame):
             font=ctk.CTkFont(size=14, weight="bold"),
         ).pack(fill="x", padx=15, pady=(15, 10))
 
-        s = self._import_summary
         stats = [
             ("📋 Hojas leídas:", str(s.get("sheet_count", 1)), "#64B5F6"),
             ("Total filas leídas:", str(s.get("total_rows", 0)), "gray90"),
@@ -439,22 +552,32 @@ class ImportView(ctk.CTkFrame):
                 text_color=color,
             ).pack(side="right")
 
-        # Error log
-        if s.get("error_details"):
-            ctk.CTkLabel(
-                summary_frame, text="Errores detectados:",
-                font=ctk.CTkFont(size=12, weight="bold"),
-            ).pack(fill="x", padx=15, pady=(15, 5))
+        # Notas de importación
+        ctk.CTkLabel(
+            summary_frame, text="📝 Notas",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(fill="x", padx=15, pady=(15, 5))
 
-            error_text = ctk.CTkTextbox(summary_frame, height=150, font=ctk.CTkFont(size=10))
-            error_text.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+        notas = []
+        if s.get("errors", 0) > 0:
+            notas.append(f"• {s['errors']} registros con errores NO serán importados.")
+        if s.get("duplicates", 0) > 0:
+            notas.append(f"• {s['duplicates']} duplicados dentro del archivo (se importa solo el primero).")
+        if s.get("skipped", 0) > 0:
+            notas.append(f"• {s['skipped']} filas vacías fueron omitidas.")
+        if s.get("valid", 0) > 0:
+            notas.append(f"• {s['valid']} registros listos para importar.")
+        if not notas:
+            notas.append("• Sin observaciones.")
 
-            for err in s["error_details"][:50]:
-                if isinstance(err, dict):
-                    error_text.insert("end", f"Fila {err.get('row', '?')}: {err.get('error', '')}\n")
-                else:
-                    error_text.insert("end", f"{err}\n")
-            error_text.configure(state="disabled")
+        notas_text = ctk.CTkTextbox(
+            summary_frame, height=120,
+            font=ctk.CTkFont(size=11),
+            fg_color="transparent",
+        )
+        notas_text.pack(fill="x", padx=15, pady=(0, 10))
+        notas_text.insert("end", "\n".join(notas))
+        notas_text.configure(state="disabled")
 
         # Enable import button and mode selector
         if s.get("valid", 0) > 0:

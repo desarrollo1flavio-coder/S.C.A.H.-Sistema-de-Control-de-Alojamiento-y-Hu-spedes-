@@ -136,27 +136,13 @@ class ExcelParser:
             except Exception as e:
                 errors.append({"row": row_label, "error": str(e)})
 
-        # Construir raw_preview (datos crudos del Excel para la vista previa)
-        # Muestreo round-robin: 1 fila por hoja para mostrar variedad
+        # Construir raw_preview (datos crudos del Excel completos para vista previa)
         raw_preview: list[dict] = []
         if self._raw_frames:
             try:
-                # Tomar 1 fila válida de cada hoja en round-robin
-                sampled: list[pd.DataFrame] = []
-                for rf in self._raw_frames:
-                    # Filtrar filas vacías (excluir columna "Hoja" del chequeo)
-                    data_cols = [c for c in rf.columns if c != "Hoja"]
-                    valid_mask = rf[data_cols].astype(str).apply(
-                        lambda x: x.str.strip().str.len().sum(), axis=1,
-                    ) > 0
-                    valid_rows_rf = rf[valid_mask]
-                    if not valid_rows_rf.empty:
-                        sampled.append(valid_rows_rf.head(1))
-
-                if sampled:
-                    sample_df = pd.concat(sampled, ignore_index=True, sort=False)
-                    sample_df = sample_df.fillna("")
-                    raw_preview = sample_df.head(PREVIEW_ROWS).to_dict(orient="records")
+                full_raw = pd.concat(self._raw_frames, ignore_index=True, sort=False)
+                full_raw = full_raw.fillna("")
+                raw_preview = full_raw.to_dict(orient="records")
             except Exception:
                 raw_preview = []
 
