@@ -1,8 +1,4 @@
-"""Sistema de logging centralizado para S.C.A.H.
-
-Configura un logger con salida a consola y archivo rotativo.
-Todos los módulos deben usar este sistema para sus logs.
-"""
+"""Sistema de logging centralizado para S.C.A.H. v2."""
 
 import logging
 import sys
@@ -18,31 +14,19 @@ from config.settings import (
 
 
 def setup_logger(name: str = "scah", level: int = logging.DEBUG) -> logging.Logger:
-    """Configura y retorna un logger con handlers de consola y archivo.
-
-    Args:
-        name: Nombre del logger. Usar nombres jerárquicos (ej: 'scah.auth').
-        level: Nivel mínimo de logging.
-
-    Returns:
-        Logger configurado y listo para usar.
-    """
+    """Configura y retorna un logger con handlers de consola y archivo."""
     logger = logging.getLogger(name)
-
-    # Evitar agregar handlers duplicados
     if logger.handlers:
         return logger
 
     logger.setLevel(level)
     formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
 
-    # Handler de consola
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Handler de archivo rotativo
     try:
         file_handler = RotatingFileHandler(
             filename=str(LOG_FILE),
@@ -60,13 +44,6 @@ def setup_logger(name: str = "scah", level: int = logging.DEBUG) -> logging.Logg
 
 
 def get_logger(module_name: str) -> logging.Logger:
-    """Obtiene un logger hijo del logger principal.
-
-    Args:
-        module_name: Nombre del módulo que solicita el logger.
-
-    Returns:
-        Logger configurado como hijo del logger principal 'scah'.
-    """
+    """Obtiene un logger hijo del logger principal."""
     parent_logger = setup_logger("scah")
     return parent_logger.getChild(module_name)

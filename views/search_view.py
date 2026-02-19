@@ -1,592 +1,304 @@
-"""Vista de búsqueda de huéspedes para S.C.A.H.
-
-Búsqueda rápida con debounce y búsqueda avanzada con filtros múltiples.
-"""
-
-from datetime import date, datetime
-from typing import Optional
+"""Vista de búsqueda de huéspedes para S.C.A.H. v2."""
 
 import customtkinter as ctk
+from tkinter import messagebox, filedialog
+from typing import Optional
 
-from config.settings import DEBOUNCE_MS, NACIONALIDADES, PAGINATION_SIZE
-from controllers.auth_controller import SessionInfo
-from controllers.huesped_controller import HuespedController
-from utils.logger import get_logger
+from controllers.estadia_controller import EstadiaController
+from controllers.persona_controller import PersonaController
+from controllers.report_controller import ReportController
+from models.estadia import EstadiaDAO
 from views.components.data_table import DataTable
+from views.components.form_fields import LabeledEntry, LabeledComboBox
+from config.settings import NACIONALIDADES, DEBOUNCE_MS
+from utils.logger import get_logger
 
 logger = get_logger("views.search")
 
 
 class SearchView(ctk.CTkFrame):
-    """Módulo de búsqueda de huéspedes."""
+    """Vista de búsqueda con filtros avanzados y resultados en tabla."""
 
-    def __init__(
-        self,
-        parent: ctk.CTkFrame,
-        session: SessionInfo,
-    ) -> None:
-        """Inicializa la vista de búsqueda.
-
-        Args:
-            parent: Frame contenedor.
-            session: Sesión del usuario.
-        """
-        super().__init__(parent, fg_color="transparent")
-
-        self._session = session
-        self._controller = HuespedController(session)
-        self._debounce_id: Optional[str] = None
-        self._advanced_visible = False
+    def __init__(self, parent, app_controller=None, **kwargs):
+        super().__init__(parent, **kwargs)
+        self._app = app_controller
+        self._debounce_id = None
         self._current_page = 1
         self._total_results = 0
-
         self._build_ui()
 
-    def _build_ui(self) -> None:
-        """Construye la interfaz de búsqueda."""
+    def _build_ui(self):
         # Header
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=30, pady=(20, 10))
+        header.pack(fill="x", padx=20, pady=(20, 10))
 
-        ctk.CTkLabel(
-            header, text="🔍  Búsqueda de Huéspedes",
-            font=ctk.CTkFont(size=22, weight="bold"),
-        ).pack(side="left")
+        ctk.CTkLabel(header, text="Buscar Huéspedes", font=("", 24, "bold")).pack(side="left")
 
-        self._result_count = ctk.CTkLabel(
-            header, text="", font=ctk.CTkFont(size=12),
-            text_color=("gray50", "gray50"),
-        )
-        self._result_count.pack(side="right")
-
-        # Quick search
-        self._build_quick_search()
-
-        # Advanced search (collapsible)
-        self._build_advanced_search()
-
-        # Results table
-        self._build_results()
-
-        # Status
-        self._msg_label = ctk.CTkLabel(
-            self, text="", font=ctk.CTkFont(size=12),
-        )
-        self._msg_label.pack(fill="x", padx=30, pady=(5, 15))
-
-    def _build_quick_search(self) -> None:
-        """Barra de búsqueda rápida."""
-        frame = ctk.CTkFrame(self, corner_radius=10)
-        frame.pack(fill="x", padx=30, pady=(0, 5))
-
-        inner = ctk.CTkFrame(frame, fg_color="transparent")
-        inner.pack(fill="x", padx=15, pady=12)
-
-        ctk.CTkLabel(
-            inner, text="🔍", font=ctk.CTkFont(size=16),
-        ).pack(side="left", padx=(0, 8))
-
-        # Selector de campo de búsqueda
-        self._search_field_options = {
-            "Todos": None,
-            "DNI": "dni",
-            "Pasaporte": "pasaporte",
-            "Apellido": "apellido",
-            "Nombre": "nombre",
-            "Nacionalidad": "nacionalidad",
-            "Establecimiento": "establecimiento",
-            "Habitación": "habitacion",
-        }
-        self._search_field = ctk.CTkComboBox(
-            inner, values=list(self._search_field_options.keys()),
-            width=130, height=38, state="readonly",
-        )
-        self._search_field.set("Todos")
-        self._search_field.pack(side="left", padx=(0, 8))
+        # Búsqueda rápida
+        search_frame = ctk.CTkFrame(self)
+        search_frame.pack(fill="x", padx=20, pady=5)
 
         self._search_entry = ctk.CTkEntry(
-            inner, placeholder_text="Ingrese el término de búsqueda...",
-            height=38, font=ctk.CTkFont(size=13),
+            search_frame, placeholder_text="Buscar por nombre, DNI, pasaporte...",
+            height=38, font=("", 13),
         )
-        self._search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        self._search_entry.bind("<KeyRelease>", self._on_key_release)
-        self._search_entry.bind("<Return>", lambda e: self._do_quick_search())
+        self._search_entry.pack(side="left", fill="x", expand=True, padx=(15, 5), pady=10)
+        self._search_entry.bind("<KeyRelease>", self._on_search_change)
+
+        self._search_field = ctk.CTkComboBox(
+            search_frame,
+            values=["Todos los campos", "DNI", "Pasaporte", "Apellido", "Nombre", "Nacionalidad", "Establecimiento"],
+            width=160,
+        )
+        self._search_field.set("Todos los campos")
+        self._search_field.pack(side="left", padx=5, pady=10)
+
+        self._btn_search = ctk.CTkButton(
+            search_frame, text="Buscar", width=100,
+            command=self._do_search,
+        )
+        self._btn_search.pack(side="left", padx=(5, 15), pady=10)
+
+        # Filtros avanzados (colapsable)
+        self._filters_visible = False
+        self._btn_toggle_filters = ctk.CTkButton(
+            self, text="Mostrar Filtros Avanzados",
+            fg_color="gray40", height=30, font=("", 12),
+            command=self._toggle_filters,
+        )
+        self._btn_toggle_filters.pack(padx=20, pady=2, anchor="w")
+
+        self._filters_frame = ctk.CTkFrame(self)
+
+        filters_row = ctk.CTkFrame(self._filters_frame, fg_color="transparent")
+        filters_row.pack(fill="x", padx=10, pady=5)
+        filters_row.columnconfigure((0, 1, 2, 3, 4), weight=1)
+
+        self._f_nacionalidad = LabeledComboBox(filters_row, "Nacionalidad", [""] + NACIONALIDADES)
+        self._f_nacionalidad.grid(row=0, column=0, sticky="ew", padx=3)
+
+        self._f_establecimiento = LabeledEntry(filters_row, "Establecimiento")
+        self._f_establecimiento.grid(row=0, column=1, sticky="ew", padx=3)
+
+        self._f_fecha_desde = LabeledEntry(filters_row, "Desde", placeholder="DD/MM/AAAA")
+        self._f_fecha_desde.grid(row=0, column=2, sticky="ew", padx=3)
+
+        self._f_fecha_hasta = LabeledEntry(filters_row, "Hasta", placeholder="DD/MM/AAAA")
+        self._f_fecha_hasta.grid(row=0, column=3, sticky="ew", padx=3)
 
         ctk.CTkButton(
-            inner, text="Buscar", width=100, height=38,
-            command=self._do_quick_search,
-        ).pack(side="left", padx=(0, 5))
+            filters_row, text="Aplicar Filtros", command=self._do_search,
+        ).grid(row=0, column=4, sticky="ew", padx=3, pady=(22, 0))
 
-        self._advanced_toggle = ctk.CTkButton(
-            inner, text="▼ Avanzada", width=110, height=38,
-            fg_color="transparent", border_width=1,
-            hover_color=("gray80", "gray30"),
-            command=self._toggle_advanced,
-        )
-        self._advanced_toggle.pack(side="left")
-
-    def _build_advanced_search(self) -> None:
-        """Panel de búsqueda avanzada (colapsable)."""
-        self._advanced_frame = ctk.CTkFrame(self, corner_radius=10)
-        # No se empaqueta hasta que se active
-
-        inner = ctk.CTkFrame(self._advanced_frame, fg_color="transparent")
-        inner.pack(fill="x", padx=15, pady=10)
-
-        ctk.CTkLabel(
-            inner, text="Búsqueda Avanzada",
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).pack(fill="x", pady=(0, 10))
-
-        # Row 1: Nombre + Apellido
-        row1 = ctk.CTkFrame(inner, fg_color="transparent")
-        row1.pack(fill="x", pady=2)
-        row1.columnconfigure((0, 1, 2, 3), weight=1)
-
-        self._adv_apellido = self._adv_field(row1, "Apellido", 0, 0)
-        self._adv_nombre = self._adv_field(row1, "Nombre", 0, 1)
-        self._adv_dni = self._adv_field(row1, "DNI", 0, 2)
-        self._adv_pasaporte = self._adv_field(row1, "Pasaporte", 0, 3)
-
-        # Row 2: Nacionalidad + Habitación + Fechas
-        row2 = ctk.CTkFrame(inner, fg_color="transparent")
-        row2.pack(fill="x", pady=2)
-        row2.columnconfigure((0, 1, 2, 3), weight=1)
-
-        # Nacionalidad combo
-        nac_frame = ctk.CTkFrame(row2, fg_color="transparent")
-        nac_frame.grid(row=0, column=0, sticky="ew", padx=5)
-        ctk.CTkLabel(nac_frame, text="Nacionalidad", font=ctk.CTkFont(size=11)).pack(anchor="w")
-        self._adv_nacionalidad = ctk.CTkComboBox(nac_frame, values=[""] + NACIONALIDADES)
-        self._adv_nacionalidad.pack(fill="x", pady=(2, 5))
-        self._adv_nacionalidad.set("")
-
-        self._adv_habitacion = self._adv_field(row2, "Habitación", 0, 1)
-
-        # Fecha desde
-        fd_frame = ctk.CTkFrame(row2, fg_color="transparent")
-        fd_frame.grid(row=0, column=2, sticky="ew", padx=5)
-        ctk.CTkLabel(fd_frame, text="Fecha desde", font=ctk.CTkFont(size=11)).pack(anchor="w")
-        self._adv_fecha_desde = ctk.CTkEntry(fd_frame, placeholder_text="DD/MM/AAAA")
-        self._adv_fecha_desde.pack(fill="x", pady=(2, 5))
-
-        # Fecha hasta
-        fh_frame = ctk.CTkFrame(row2, fg_color="transparent")
-        fh_frame.grid(row=0, column=3, sticky="ew", padx=5)
-        ctk.CTkLabel(fh_frame, text="Fecha hasta", font=ctk.CTkFont(size=11)).pack(anchor="w")
-        self._adv_fecha_hasta = ctk.CTkEntry(fh_frame, placeholder_text="DD/MM/AAAA")
-        self._adv_fecha_hasta.pack(fill="x", pady=(2, 5))
-
-        # Row 3: Operador + Botones
-        row3 = ctk.CTkFrame(inner, fg_color="transparent")
-        row3.pack(fill="x", pady=(10, 0))
-
-        ctk.CTkLabel(row3, text="Operador:", font=ctk.CTkFont(size=12)).pack(side="left")
-
-        self._adv_operator = ctk.CTkSegmentedButton(
-            row3, values=["AND", "OR"], width=120, height=30,
-        )
-        self._adv_operator.pack(side="left", padx=(5, 20))
-        self._adv_operator.set("AND")
-
-        ctk.CTkButton(
-            row3, text="Limpiar", width=80,
-            fg_color="transparent", border_width=1,
-            hover_color=("gray80", "gray30"),
-            command=self._clear_advanced,
-        ).pack(side="right", padx=5)
-
-        ctk.CTkButton(
-            row3, text="🔍 Buscar", width=100,
-            command=self._do_advanced_search,
-        ).pack(side="right", padx=5)
-
-    def _build_results(self) -> None:
-        """Tabla de resultados."""
-        columns = [
-            ("id", "ID", 50),
-            ("apellido", "Apellido", 130),
-            ("nombre", "Nombre", 130),
-            ("documento", "Documento", 160),
-            ("nacionalidad", "Nacionalidad", 110),
-            ("habitacion", "Hab.", 60),
-            ("fecha_entrada", "Entrada", 100),
-            ("fecha_salida", "Salida", 100),
-            ("telefono", "Teléfono", 110),
+        # Tabla de resultados
+        table_columns = [
+            {"key": "id", "text": "ID", "width": 50},
+            {"key": "establecimiento", "text": "HOTEL", "width": 130},
+            {"key": "apellido", "text": "APELLIDO", "width": 120},
+            {"key": "nombre", "text": "NOMBRE", "width": 100},
+            {"key": "dni", "text": "D.N.I.", "width": 90},
+            {"key": "pasaporte", "text": "PASAPORTE", "width": 90},
+            {"key": "nacionalidad", "text": "NACIONALIDAD", "width": 100},
+            {"key": "procedencia", "text": "PROCEDENCIA", "width": 100},
+            {"key": "edad", "text": "EDAD", "width": 50},
+            {"key": "profesion", "text": "PROFESIÓN", "width": 90},
+            {"key": "fecha_entrada", "text": "ENTRADA", "width": 90},
+            {"key": "fecha_salida", "text": "SALIDA", "width": 90},
         ]
-
         self._table = DataTable(
-            self, columns=columns, page_size=PAGINATION_SIZE,
+            self, columns=table_columns,
+            on_double_click=self._on_row_double_click,
         )
-        self._table.pack(fill="both", expand=True, padx=30, pady=(5, 5))
+        self._table.pack(fill="both", expand=True, padx=20, pady=5)
 
-        # Action bar
-        action_bar = ctk.CTkFrame(self, fg_color="transparent")
-        action_bar.pack(fill="x", padx=30, pady=(0, 5))
+        # Footer con paginación y exportar
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(fill="x", padx=20, pady=(5, 10))
 
-        self._view_btn = ctk.CTkButton(
-            action_bar, text="👁 Ver Detalle", width=120,
-            command=self._view_detail, state="disabled",
+        self._results_label = ctk.CTkLabel(footer, text="0 resultados", font=("", 12))
+        self._results_label.pack(side="left")
+
+        self._btn_next = ctk.CTkButton(
+            footer, text=">", width=30, command=lambda: self._change_page(1),
         )
-        self._view_btn.pack(side="left", padx=(0, 5))
+        self._btn_next.pack(side="right", padx=2)
 
-        self._edit_btn = ctk.CTkButton(
-            action_bar, text="✏️ Editar", width=100,
-            command=self._edit_record, state="disabled",
+        self._page_label = ctk.CTkLabel(footer, text="Pág. 1", font=("", 12))
+        self._page_label.pack(side="right", padx=5)
+
+        self._btn_prev = ctk.CTkButton(
+            footer, text="<", width=30, command=lambda: self._change_page(-1),
         )
-        self._edit_btn.pack(side="left", padx=(0, 5))
+        self._btn_prev.pack(side="right", padx=2)
 
-        if self._session.tiene_permiso("eliminar"):
-            self._delete_btn = ctk.CTkButton(
-                action_bar, text="🗑 Eliminar", width=100,
-                fg_color=("#D32F2F", "#B71C1C"),
-                hover_color=("#B71C1C", "#8B0000"),
-                command=self._delete_record, state="disabled",
-            )
-            self._delete_btn.pack(side="left", padx=(0, 5))
+        ctk.CTkButton(
+            footer, text="Exportar Excel", width=120,
+            fg_color="gray40", command=self._export_excel,
+        ).pack(side="right", padx=10)
 
-        # Bind table selection
-        if hasattr(self._table, "_tree"):
-            self._table._tree.bind("<<TreeviewSelect>>", self._on_select)
+        ctk.CTkButton(
+            footer, text="Exportar PDF", width=120,
+            fg_color="gray40", command=self._export_pdf,
+        ).pack(side="right", padx=2)
 
-    # ── Helpers ──────────────────────────────────────────────────
-
-    def _adv_field(
-        self, parent: ctk.CTkFrame, label: str, row: int, col: int,
-    ) -> ctk.CTkEntry:
-        """Campo de búsqueda avanzada.
-
-        Args:
-            parent: Frame contenedor.
-            label: Etiqueta.
-            row: Fila.
-            col: Columna.
-
-        Returns:
-            Entry creado.
-        """
-        frame = ctk.CTkFrame(parent, fg_color="transparent")
-        frame.grid(row=row, column=col, sticky="ew", padx=5)
-        ctk.CTkLabel(frame, text=label, font=ctk.CTkFont(size=11)).pack(anchor="w")
-        entry = ctk.CTkEntry(frame, placeholder_text=label)
-        entry.pack(fill="x", pady=(2, 5))
-        return entry
-
-    def _toggle_advanced(self) -> None:
-        """Muestra/oculta búsqueda avanzada."""
-        if self._advanced_visible:
-            self._advanced_frame.pack_forget()
-            self._advanced_toggle.configure(text="▼ Avanzada")
+    def _toggle_filters(self):
+        self._filters_visible = not self._filters_visible
+        if self._filters_visible:
+            self._filters_frame.pack(fill="x", padx=20, pady=2, after=self._btn_toggle_filters)
+            self._btn_toggle_filters.configure(text="Ocultar Filtros Avanzados")
         else:
-            self._advanced_frame.pack(fill="x", padx=30, pady=(0, 5),
-                                       after=self._advanced_toggle.master.master)
-            self._advanced_toggle.configure(text="▲ Avanzada")
-        self._advanced_visible = not self._advanced_visible
+            self._filters_frame.pack_forget()
+            self._btn_toggle_filters.configure(text="Mostrar Filtros Avanzados")
 
-    def _clear_advanced(self) -> None:
-        """Limpia campos avanzados."""
-        for entry in (self._adv_apellido, self._adv_nombre, self._adv_dni,
-                      self._adv_pasaporte, self._adv_habitacion,
-                      self._adv_fecha_desde, self._adv_fecha_hasta):
-            entry.delete(0, "end")
-        self._adv_nacionalidad.set("")
-        self._adv_operator.set("AND")
-
-    # ── Debounce ─────────────────────────────────────────────────
-
-    def _on_key_release(self, event) -> None:
-        """Maneja keyrelease con debounce.
-
-        Args:
-            event: Evento de teclado.
-        """
+    def _on_search_change(self, event=None):
         if self._debounce_id:
             self.after_cancel(self._debounce_id)
-        self._debounce_id = self.after(DEBOUNCE_MS, self._do_quick_search)
+        self._debounce_id = self.after(DEBOUNCE_MS, self._do_search)
 
-    # ── Quick Search ─────────────────────────────────────────────
+    def _get_field_name(self) -> str | None:
+        field = self._search_field.get()
+        field_map = {
+            "DNI": "dni", "Pasaporte": "pasaporte",
+            "Apellido": "apellido", "Nombre": "nombre",
+            "Nacionalidad": "nacionalidad", "Establecimiento": "establecimiento",
+        }
+        return field_map.get(field)
 
-    def _do_quick_search(self) -> None:
-        """Ejecuta la búsqueda rápida."""
-        query = self._search_entry.get().strip()
-        if not query:
-            self._table.load_data([])
-            self._result_count.configure(text="")
-            self._update_action_buttons(False)
-            return
-
-        # Obtener campo seleccionado
-        field_label = self._search_field.get()
-        campo = self._search_field_options.get(field_label)
-
-        try:
-            results = self._controller.buscar_rapida(query, campo=campo)
-            self._display_results(results)
-        except Exception as e:
-            logger.error("Error en búsqueda rápida: %s", e)
-            self._show_msg(f"❌ Error: {e}")
-
-    # ── Advanced Search ──────────────────────────────────────────
-
-    def _do_advanced_search(self) -> None:
-        """Ejecuta la búsqueda avanzada."""
-        filtros: dict = {}
-
-        for key, entry in [
-            ("apellido", self._adv_apellido),
-            ("nombre", self._adv_nombre),
-            ("dni", self._adv_dni),
-            ("pasaporte", self._adv_pasaporte),
-            ("habitacion", self._adv_habitacion),
-        ]:
-            val = entry.get().strip()
-            if val:
-                filtros[key] = val
-
-        nac = self._adv_nacionalidad.get().strip()
+    def _build_filters(self) -> dict | None:
+        filtros = {}
+        nac = self._f_nacionalidad.get() if self._filters_visible else ""
         if nac:
             filtros["nacionalidad"] = nac
+        est = self._f_establecimiento.get() if self._filters_visible else ""
+        if est:
+            filtros["establecimiento"] = est
+        # Parse dates
+        from datetime import datetime
+        for key, field in [("fecha_desde", self._f_fecha_desde), ("fecha_hasta", self._f_fecha_hasta)]:
+            if self._filters_visible and field.get():
+                for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
+                    try:
+                        filtros[key] = datetime.strptime(field.get(), fmt).strftime("%Y-%m-%d")
+                        break
+                    except ValueError:
+                        continue
+        return filtros if filtros else None
 
-        # Fechas
-        for key, entry in [
-            ("fecha_desde", self._adv_fecha_desde),
-            ("fecha_hasta", self._adv_fecha_hasta),
-        ]:
-            val = entry.get().strip()
-            if val:
-                try:
-                    filtros[key] = datetime.strptime(val, "%d/%m/%Y").strftime("%Y-%m-%d")
-                except ValueError:
-                    self._show_msg(f"⚠️ Formato de fecha inválido: {val}. Use DD/MM/AAAA")
-                    return
-
-        if not filtros:
-            self._show_msg("⚠️ Ingrese al menos un criterio de búsqueda")
-            return
-
-        operador = self._adv_operator.get()
+    def _do_search(self):
+        termino = self._search_entry.get().strip()
+        campo = self._get_field_name()
+        filtros = self._build_filters()
 
         try:
-            results, total = self._controller.buscar_avanzada(
+            ctrl = EstadiaController()
+            resultados, total = ctrl.buscar(
+                termino=termino,
+                campo=campo,
                 filtros=filtros,
-                operador=operador,
-                pagina=1,
-                por_pagina=PAGINATION_SIZE,
+                pagina=self._current_page,
             )
-            self._display_results(results)
+            self._total_results = total
+            self._table.load_data(resultados)
+            self._results_label.configure(text=f"{total} resultados")
+            max_pages = max(1, (total + 49) // 50)
+            self._page_label.configure(text=f"Pág. {self._current_page}/{max_pages}")
+
         except Exception as e:
-            logger.error("Error en búsqueda avanzada: %s", e)
-            self._show_msg(f"❌ Error: {e}")
+            logger.error("Error en búsqueda: %s", e)
+            messagebox.showerror("Error", str(e))
 
-    # ── Display Results ──────────────────────────────────────────
-
-    @staticmethod
-    def _add_documento_field(records: list[dict]) -> list[dict]:
-        """Agrega campo virtual 'documento' combinando DNI y pasaporte.
-
-        Args:
-            records: Lista de registros de la BD.
-
-        Returns:
-            Lista con campo 'documento' agregado.
-        """
-        for rec in records:
-            dni = rec.get("dni") or ""
-            pas = rec.get("pasaporte") or ""
-            if dni and pas:
-                rec["documento"] = f"DNI: {dni} / PAS: {pas}"
-            elif dni:
-                rec["documento"] = f"DNI: {dni}"
-            elif pas:
-                rec["documento"] = f"PAS: {pas}"
-            else:
-                rec["documento"] = "S/N"
-        return records
-
-    def _display_results(self, results: list[dict]) -> None:
-        """Muestra resultados en la tabla.
-
-        Args:
-            results: Lista de registros.
-        """
-        self._total_results = len(results)
-        results = self._add_documento_field(results)
-        self._table.load_data(results)
-        self._result_count.configure(text=f"{self._total_results} resultado(s)")
-        self._update_action_buttons(False)
-
-        if not results:
-            self._show_msg("No se encontraron resultados", error=False)
-        else:
-            self._show_msg("")
-
-    # ── Actions ──────────────────────────────────────────────────
-
-    def _on_select(self, event) -> None:
-        """Maneja selección en la tabla.
-
-        Args:
-            event: Evento de selección.
-        """
-        selected = self._table.get_selected()
-        self._update_action_buttons(selected is not None)
-
-    def _update_action_buttons(self, enabled: bool) -> None:
-        """Actualiza estado de botones de acción.
-
-        Args:
-            enabled: True para habilitar.
-        """
-        state = "normal" if enabled else "disabled"
-        self._view_btn.configure(state=state)
-        self._edit_btn.configure(state=state)
-        if hasattr(self, "_delete_btn"):
-            self._delete_btn.configure(state=state)
-
-    def _get_selected_id(self) -> Optional[int]:
-        """Obtiene el ID del registro seleccionado.
-
-        Returns:
-            ID del huésped o None.
-        """
-        selected = self._table.get_selected()
-        if selected and "id" in selected:
-            try:
-                return int(selected["id"])
-            except (ValueError, TypeError):
-                return None
-        return None
-
-    def _view_detail(self) -> None:
-        """Muestra detalle del huésped seleccionado."""
-        huesped_id = self._get_selected_id()
-        if not huesped_id:
+    def _change_page(self, delta: int):
+        new_page = self._current_page + delta
+        if new_page < 1:
             return
+        max_pages = max(1, (self._total_results + 49) // 50)
+        if new_page > max_pages:
+            return
+        self._current_page = new_page
+        self._do_search()
 
-        try:
-            data = self._controller.obtener(huesped_id)
-            if not data:
-                self._show_msg("⚠️ Registro no encontrado")
-                return
-            self._show_detail_dialog(data)
-        except Exception as e:
-            self._show_msg(f"❌ Error: {e}")
+    def _on_row_double_click(self, row: dict):
+        """Abre un diálogo de detalle/edición al hacer doble click."""
+        if not row:
+            return
+        self._show_detail_dialog(row)
 
-    def _show_detail_dialog(self, data: dict) -> None:
-        """Muestra diálogo con detalle del huésped.
-
-        Args:
-            data: Datos del huésped.
-        """
+    def _show_detail_dialog(self, data: dict):
+        """Muestra diálogo con detalle de la estadía y opción de editar."""
         dialog = ctk.CTkToplevel(self)
-        dialog.title("Detalle del Huésped")
-        dialog.geometry("500x600")
-        dialog.resizable(False, False)
+        dialog.title("Detalle de Estadía")
+        dialog.geometry("600x500")
         dialog.grab_set()
 
         scroll = ctk.CTkScrollableFrame(dialog)
-        scroll.pack(fill="both", expand=True, padx=20, pady=20)
-
-        ctk.CTkLabel(
-            scroll,
-            text=f"{data.get('apellido', '')} {data.get('nombre', '')}",
-            font=ctk.CTkFont(size=18, weight="bold"),
-        ).pack(fill="x", pady=(0, 15))
-
-        # Construir campo Documento combinado
-        dni_val = data.get("dni") or ""
-        pas_val = data.get("pasaporte") or ""
-        if dni_val and pas_val:
-            data["documento_detalle"] = f"DNI: {dni_val} / Pasaporte: {pas_val}"
-        elif dni_val:
-            data["documento_detalle"] = f"DNI: {dni_val}"
-        elif pas_val:
-            data["documento_detalle"] = f"Pasaporte: {pas_val}"
-        else:
-            data["documento_detalle"] = "S/N"
+        scroll.pack(fill="both", expand=True, padx=15, pady=15)
 
         fields = [
-            ("ID", "id"),
-            ("Nacionalidad", "nacionalidad"),
-            ("Procedencia", "procedencia"),
-            ("Documento", "documento_detalle"),
-            ("Edad", "edad"),
-            ("Fecha Nacimiento", "fecha_nacimiento"),
-            ("Profesión", "profesion"),
-            ("Establecimiento", "establecimiento"),
-            ("Habitación", "habitacion"),
-            ("Destino", "destino"),
-            ("Teléfono", "telefono"),
-            ("Vehículo", "vehiculo_tiene"),
-            ("Datos Vehículo", "vehiculo_datos"),
-            ("Fecha Entrada", "fecha_entrada"),
-            ("Fecha Salida", "fecha_salida"),
-            ("Cargado por", "usuario_carga"),
-            ("Fecha Creación", "created_at"),
+            ("ID Estadía", "id"), ("Hotel", "establecimiento"),
+            ("Apellido", "apellido"), ("Nombre", "nombre"),
+            ("D.N.I.", "dni"), ("Pasaporte", "pasaporte"),
+            ("Nacionalidad", "nacionalidad"), ("Procedencia", "procedencia"),
+            ("Edad", "edad"), ("Profesión", "profesion"),
+            ("Fecha Nac.", "fecha_nacimiento"),
+            ("Entrada", "fecha_entrada"), ("Salida", "fecha_salida"),
         ]
 
         for label, key in fields:
-            val = data.get(key, "—")
-            if val is None or val == "":
-                val = "—"
-            if key == "vehiculo_tiene":
-                val = "Sí" if val else "No"
+            row_f = ctk.CTkFrame(scroll, fg_color="transparent")
+            row_f.pack(fill="x", pady=2)
+            ctk.CTkLabel(row_f, text=f"{label}:", font=("", 12, "bold"), width=120, anchor="e").pack(side="left", padx=5)
+            ctk.CTkLabel(row_f, text=str(data.get(key, "")), font=("", 12), anchor="w").pack(side="left", padx=5)
 
-            row = ctk.CTkFrame(scroll, fg_color="transparent")
-            row.pack(fill="x", pady=2)
+        # Historial de la persona
+        persona_id = data.get("persona_id")
+        if persona_id:
+            ctk.CTkLabel(scroll, text="Historial de Estadías", font=("", 14, "bold")).pack(
+                anchor="w", pady=(15, 5),
+            )
+            try:
+                estadias = EstadiaDAO.obtener_por_persona(persona_id)
+                for est in estadias:
+                    info = f"  {est.get('fecha_entrada', '')} al {est.get('fecha_salida', 'presente')} - {est.get('establecimiento', 'S/D')}"
+                    ctk.CTkLabel(scroll, text=info, font=("", 11)).pack(anchor="w", padx=10)
+            except Exception:
+                pass
 
-            ctk.CTkLabel(
-                row, text=f"{label}:", font=ctk.CTkFont(size=12, weight="bold"),
-                width=140, anchor="w",
-            ).pack(side="left")
-            ctk.CTkLabel(
-                row, text=str(val), font=ctk.CTkFont(size=12),
-            ).pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(dialog, text="Cerrar", command=dialog.destroy).pack(pady=10)
 
-        ctk.CTkButton(
-            scroll, text="Cerrar", width=100, command=dialog.destroy,
-        ).pack(pady=(20, 0))
-
-    def _edit_record(self) -> None:
-        """Abre diálogo de edición (placeholder)."""
-        huesped_id = self._get_selected_id()
-        if not huesped_id:
-            return
-        self._show_msg(f"Función de edición para ID {huesped_id} — En desarrollo")
-
-    def _delete_record(self) -> None:
-        """Elimina el registro seleccionado."""
-        huesped_id = self._get_selected_id()
-        if not huesped_id:
-            return
-
-        from tkinter import messagebox
-
-        confirm = messagebox.askyesno(
-            "Confirmar Eliminación",
-            f"¿Está seguro de eliminar el huésped ID {huesped_id}?\n"
-            "El registro será desactivado (soft-delete).",
-            parent=self,
+    def _export_excel(self):
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            title="Exportar a Excel",
         )
-        if not confirm:
+        if not filepath:
             return
-
         try:
-            result = self._controller.eliminar(huesped_id)
-            if result:
-                self._show_msg(f"✅ Huésped ID {huesped_id} eliminado", error=False)
-                self._do_quick_search()  # Refrescar
-            else:
-                self._show_msg("⚠️ No se pudo eliminar el registro")
+            ctrl = ReportController()
+            ctrl.exportar_excel(
+                filepath,
+                filtros=self._build_filters(),
+                termino=self._search_entry.get().strip(),
+            )
+            messagebox.showinfo("Éxito", f"Archivo exportado:\n{filepath}")
         except Exception as e:
-            self._show_msg(f"❌ Error: {e}")
+            messagebox.showerror("Error", str(e))
 
-    def _show_msg(self, msg: str, error: bool = True) -> None:
-        """Muestra mensaje.
-
-        Args:
-            msg: Texto.
-            error: True=rojo, False=verde.
-        """
-        color = ("red", "#FF6B6B") if error else ("green", "#4ECB71")
-        self._msg_label.configure(text=msg, text_color=color)
+    def _export_pdf(self):
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")],
+            title="Exportar a PDF",
+        )
+        if not filepath:
+            return
+        try:
+            ctrl = ReportController()
+            ctrl.exportar_pdf(
+                filepath,
+                filtros=self._build_filters(),
+                termino=self._search_entry.get().strip(),
+            )
+            messagebox.showinfo("Éxito", f"Archivo exportado:\n{filepath}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))

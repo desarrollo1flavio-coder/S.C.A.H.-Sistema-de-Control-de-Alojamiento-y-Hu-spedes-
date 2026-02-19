@@ -1,1 +1,1 @@
-"""Módulo de utilidades del sistema S.C.A.H."""
+"""Módulo de utilidades de S.C.A.H. v2."""

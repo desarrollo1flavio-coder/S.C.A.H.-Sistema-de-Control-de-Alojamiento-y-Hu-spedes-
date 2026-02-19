@@ -1,735 +1,260 @@
-"""Vista de importación de archivos Excel para S.C.A.H.
+"""Vista de importación de Excel para S.C.A.H. v2."""
 
-Permite seleccionar, previsualizar e importar datos de huéspedes desde Excel.
-"""
-
+import os
 import threading
-from pathlib import Path
+import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from typing import Optional
 
-import customtkinter as ctk
-
-from config.settings import ALLOWED_EXTENSIONS, PAGINATION_SIZE
-from controllers.auth_controller import SessionInfo
-from utils.logger import get_logger
+from controllers.import_controller import ImportController
+from utils.excel_parser import preview_archivo
 from views.components.data_table import DataTable
+from utils.logger import get_logger
 
 logger = get_logger("views.import")
 
 
 class ImportView(ctk.CTkFrame):
-    """Módulo de importación de archivos Excel."""
+    """Vista completa de importación de archivos Excel."""
 
-    def __init__(
-        self,
-        parent: ctk.CTkFrame,
-        session: SessionInfo,
-    ) -> None:
-        """Inicializa la vista de importación.
-
-        Args:
-            parent: Frame contenedor.
-            session: Sesión del usuario.
-        """
-        super().__init__(parent, fg_color="transparent")
-
-        self._session = session
-        self._file_path: Optional[Path] = None
-        self._preview_data: list[dict] = []
-        self._all_data: list[dict] = []
-        self._error_details: list[dict] = []
-        self._duplicate_details: list[dict] = []
-        self._import_summary: dict = {}
-        self._is_importing = False
-        self._available_sheets: list[str] = []
-        self._selected_sheets: Optional[list[str]] = None  # None = todas
-        self._import_mode = "skip"  # "skip", "update", "always"
-
+    def __init__(self, parent, app_controller=None, **kwargs):
+        super().__init__(parent, **kwargs)
+        self._app = app_controller
+        self._filepath: Optional[str] = None
+        self._preview_data: Optional[dict] = None
+        self._import_running = False
         self._build_ui()
 
-    def _build_ui(self) -> None:
-        """Construye la interfaz de importación."""
+    def _build_ui(self):
         # Header
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=30, pady=(20, 10))
+        header.pack(fill="x", padx=20, pady=(20, 10))
 
-        ctk.CTkLabel(
-            header, text="📂  Importar Archivo Excel",
-            font=ctk.CTkFont(size=22, weight="bold"),
-        ).pack(side="left")
+        ctk.CTkLabel(header, text="Importar Excel", font=("", 24, "bold")).pack(side="left")
 
-        # File selector
-        file_frame = ctk.CTkFrame(self, corner_radius=10)
-        file_frame.pack(fill="x", padx=30, pady=(0, 10))
+        # Panel de selección de archivo
+        file_frame = ctk.CTkFrame(self)
+        file_frame.pack(fill="x", padx=20, pady=5)
 
-        inner = ctk.CTkFrame(file_frame, fg_color="transparent")
-        inner.pack(fill="x", padx=15, pady=15)
-
-        ctk.CTkLabel(
-            inner, text="Archivo:",
-            font=ctk.CTkFont(size=13, weight="bold"),
-        ).pack(side="left", padx=(0, 10))
-
+        ctk.CTkLabel(file_frame, text="Archivo:", font=("", 13)).pack(
+            side="left", padx=(15, 5), pady=10,
+        )
         self._file_label = ctk.CTkLabel(
-            inner, text="Ningún archivo seleccionado",
-            font=ctk.CTkFont(size=12), text_color=("gray50", "gray50"),
+            file_frame, text="Ningún archivo seleccionado",
+            font=("", 12), text_color="gray",
         )
-        self._file_label.pack(side="left", fill="x", expand=True)
+        self._file_label.pack(side="left", padx=5, pady=10, fill="x", expand=True)
 
-        ctk.CTkButton(
-            inner, text="📁 Seleccionar Archivo", width=180,
-            command=self._select_file,
-        ).pack(side="right")
-
-        # Content area (preview + summary)
-        self._content_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self._content_frame.pack(fill="both", expand=True, padx=30, pady=(0, 10))
-
-        self._show_placeholder()
-
-        # Bottom bar
-        self._build_bottom_bar()
-
-    def _show_placeholder(self) -> None:
-        """Muestra placeholder cuando no hay archivo seleccionado."""
-        for w in self._content_frame.winfo_children():
-            w.destroy()
-
-        placeholder = ctk.CTkFrame(self._content_frame, fg_color="transparent")
-        placeholder.pack(fill="both", expand=True)
-
-        center = ctk.CTkFrame(placeholder, fg_color="transparent")
-        center.place(relx=0.5, rely=0.4, anchor="center")
-
-        ctk.CTkLabel(
-            center, text="📄", font=ctk.CTkFont(size=48),
-        ).pack(pady=(0, 10))
-
-        ctk.CTkLabel(
-            center, text="Seleccione un archivo Excel (.xlsx, .xls)",
-            font=ctk.CTkFont(size=16),
-            text_color=("gray50", "gray50"),
-        ).pack()
-
-        ctk.CTkLabel(
-            center,
-            text="El sistema mapeará automáticamente las columnas\n"
-                 "e identificará los registros válidos.",
-            font=ctk.CTkFont(size=12),
-            text_color=("gray60", "gray40"),
-        ).pack(pady=(10, 0))
-
-    def _build_bottom_bar(self) -> None:
-        """Barra inferior con progreso y botones."""
-        bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.pack(fill="x", padx=30, pady=(5, 20))
-
-        # Mensaje de estado
-        self._msg_label = ctk.CTkLabel(
-            bar, text="", font=ctk.CTkFont(size=12),
+        self._btn_select = ctk.CTkButton(
+            file_frame, text="Seleccionar Archivo",
+            width=160, command=self._select_file,
         )
-        self._msg_label.pack(side="left")
+        self._btn_select.pack(side="right", padx=15, pady=10)
 
-        # Frame para botón y selector de modo
-        right_frame = ctk.CTkFrame(bar, fg_color="transparent")
-        right_frame.pack(side="right")
+        # Panel de mapeo de columnas
+        mapeo_frame = ctk.CTkFrame(self)
+        mapeo_frame.pack(fill="x", padx=20, pady=5)
 
-        # Selector de modo de importación
-        mode_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
-        mode_frame.pack(side="left", padx=(0, 15))
-
-        ctk.CTkLabel(
-            mode_frame, text="Duplicados:",
-            font=ctk.CTkFont(size=11),
-            text_color=("gray50", "gray60"),
-        ).pack(side="left", padx=(0, 5))
-
-        self._mode_var = ctk.StringVar(value="skip")
-        self._mode_combo = ctk.CTkComboBox(
-            mode_frame,
-            values=["Omitir", "Actualizar", "Importar siempre"],
-            variable=self._mode_var,
-            width=140,
-            height=30,
-            font=ctk.CTkFont(size=11),
-            command=self._on_mode_change,
-            state="disabled",
+        ctk.CTkLabel(mapeo_frame, text="Mapeo de Columnas Detectado", font=("", 14, "bold")).pack(
+            anchor="w", padx=15, pady=(10, 5),
         )
-        self._mode_combo.set("Omitir")
-        self._mode_combo.pack(side="left")
+        self._mapeo_text = ctk.CTkTextbox(mapeo_frame, height=100, state="disabled")
+        self._mapeo_text.pack(fill="x", padx=15, pady=(0, 10))
 
-        self._import_btn = ctk.CTkButton(
-            right_frame, text="🚀  Importar Datos", width=160, height=38,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            command=self._handle_import, state="disabled",
+        # Preview de datos
+        preview_frame = ctk.CTkFrame(self)
+        preview_frame.pack(fill="both", expand=True, padx=20, pady=5)
+
+        ctk.CTkLabel(preview_frame, text="Vista Previa", font=("", 14, "bold")).pack(
+            anchor="w", padx=15, pady=(10, 5),
         )
-        self._import_btn.pack(side="right")
 
-        self._progress = ctk.CTkProgressBar(bar, height=4)
-        self._progress.pack(fill="x", side="bottom", pady=(10, 0))
-        self._progress.set(0)
-
-    def _on_mode_change(self, choice: str) -> None:
-        """Actualiza el modo de importación según selección."""
-        mode_map = {
-            "Omitir": "skip",
-            "Actualizar": "update",
-            "Importar siempre": "always",
-        }
-        self._import_mode = mode_map.get(choice, "skip")
-
-    # ── File Selection ───────────────────────────────────────────
-
-    def _select_file(self) -> None:
-        """Abre diálogo para seleccionar archivo Excel."""
-        filetypes = [
-            ("Archivos Excel", "*.xlsx *.xls"),
-            ("Todos los archivos", "*.*"),
+        preview_columns = [
+            {"key": "establecimiento", "text": "HOTEL", "width": 120},
+            {"key": "apellido", "text": "APELLIDO", "width": 120},
+            {"key": "nombre", "text": "NOMBRE", "width": 100},
+            {"key": "dni", "text": "DNI/PAS.", "width": 90},
+            {"key": "nacionalidad", "text": "NACIONALIDAD", "width": 100},
+            {"key": "procedencia", "text": "PROCEDENCIA", "width": 100},
+            {"key": "edad", "text": "EDAD", "width": 50},
+            {"key": "fecha_entrada", "text": "ENTRADA", "width": 90},
+            {"key": "fecha_salida", "text": "SALIDA", "width": 90},
+            {"key": "profesion", "text": "PROFESIÓN", "width": 90},
         ]
-        path = filedialog.askopenfilename(
-            title="Seleccionar archivo Excel",
-            filetypes=filetypes,
-            parent=self,
+        self._preview_table = DataTable(preview_frame, columns=preview_columns)
+        self._preview_table.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+
+        # Panel de importación
+        import_frame = ctk.CTkFrame(self)
+        import_frame.pack(fill="x", padx=20, pady=(5, 10))
+
+        self._progress_bar = ctk.CTkProgressBar(import_frame)
+        self._progress_bar.pack(fill="x", padx=15, pady=(10, 5))
+        self._progress_bar.set(0)
+
+        self._progress_label = ctk.CTkLabel(
+            import_frame, text="Seleccione un archivo para comenzar",
+            font=("", 12), text_color="gray",
         )
-        if not path:
+        self._progress_label.pack(padx=15, pady=2)
+
+        btn_frame = ctk.CTkFrame(import_frame, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=15, pady=(5, 10))
+
+        self._btn_import = ctk.CTkButton(
+            btn_frame, text="Importar Datos",
+            font=("", 14, "bold"), height=40, width=200,
+            state="disabled",
+            command=self._start_import,
+        )
+        self._btn_import.pack(side="right")
+
+        self._btn_cancel = ctk.CTkButton(
+            btn_frame, text="Cancelar",
+            font=("", 14), height=40, width=120,
+            fg_color="gray40",
+            state="disabled",
+            command=self._cancel_import,
+        )
+        self._btn_cancel.pack(side="right", padx=10)
+
+    def _select_file(self):
+        filepath = filedialog.askopenfilename(
+            title="Seleccionar archivo Excel",
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
+        )
+        if not filepath:
             return
 
-        path_obj = Path(path)
-        if path_obj.suffix.lower() not in ALLOWED_EXTENSIONS:
-            self._show_msg("⚠️ Formato no soportado. Use .xlsx o .xls")
-            return
-
-        self._file_path = path_obj
+        self._filepath = filepath
         self._file_label.configure(
-            text=f"📄 {path_obj.name}",
+            text=os.path.basename(filepath),
             text_color=("gray10", "gray90"),
         )
-        self._show_msg("")
-
-        # Leer hojas disponibles y mostrar selector
-        thread = threading.Thread(target=self._load_sheet_list, daemon=True)
-        thread.start()
-
-    def _load_sheet_list(self) -> None:
-        """Lee la lista de hojas del archivo en un hilo."""
-        self.after(0, lambda: self._show_msg("Leyendo hojas del archivo..."))
-        try:
-            from utils.excel_parser import ExcelParser
-            # Listar TODAS las hojas, no solo numéricas
-            sheets = ExcelParser.list_sheets(self._file_path, only_numeric=False)
-            self._available_sheets = sheets
-            self.after(0, self._show_sheet_selector)
-        except Exception as e:
-            logger.error("Error al leer hojas: %s", e)
-            msg = f"❌ Error al leer hojas: {e}"
-            self.after(0, lambda msg=msg: self._show_msg(msg))
-
-    def _show_sheet_selector(self) -> None:
-        """Muestra el selector de hojas antes de la preview."""
-        for w in self._content_frame.winfo_children():
-            w.destroy()
-
-        self._show_msg("")
-
-        container = ctk.CTkFrame(self._content_frame, fg_color="transparent")
-        container.pack(fill="both", expand=True)
-
-        center = ctk.CTkFrame(container, fg_color="transparent")
-        center.place(relx=0.5, rely=0.35, anchor="center")
-
-        ctk.CTkLabel(
-            center, text="📊  Seleccionar Hojas",
-            font=ctk.CTkFont(size=18, weight="bold"),
-        ).pack(pady=(0, 10))
-
-        ctk.CTkLabel(
-            center,
-            text=f"El archivo contiene {len(self._available_sheets)} hojas con datos.",
-            font=ctk.CTkFont(size=13),
-            text_color=("gray40", "gray60"),
-        ).pack(pady=(0, 15))
-
-        # Botón: Todas las hojas
-        ctk.CTkButton(
-            center, text=f"✅  Todas las hojas ({len(self._available_sheets)})",
-            width=280, height=40,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            command=self._select_all_sheets,
-        ).pack(pady=(0, 10))
-
-        ctk.CTkLabel(
-            center, text="— o elegir hojas específicas —",
-            font=ctk.CTkFont(size=11),
-            text_color=("gray50", "gray50"),
-        ).pack(pady=(5, 10))
-
-        # Frame scrollable con checkboxes de hojas
-        check_frame = ctk.CTkScrollableFrame(
-            center, width=350, height=200, corner_radius=8,
-        )
-        check_frame.pack(pady=(0, 15))
-
-        self._sheet_checkboxes: dict[str, ctk.CTkCheckBox] = {}
-
-        # Organizar en grilla de 5 columnas
-        cols = 5
-        for idx, sheet in enumerate(self._available_sheets):
-            r, c = divmod(idx, cols)
-            cb = ctk.CTkCheckBox(
-                check_frame, text=sheet, width=60,
-                font=ctk.CTkFont(size=12),
-            )
-            cb.grid(row=r, column=c, padx=5, pady=3, sticky="w")
-            self._sheet_checkboxes[sheet] = cb
-
-        # Botones de selección rápida + importar seleccionadas
-        btn_row = ctk.CTkFrame(center, fg_color="transparent")
-        btn_row.pack(pady=(0, 5))
-
-        ctk.CTkButton(
-            btn_row, text="Marcar todas", width=120, height=30,
-            font=ctk.CTkFont(size=11),
-            command=self._check_all_sheets,
-        ).pack(side="left", padx=5)
-
-        ctk.CTkButton(
-            btn_row, text="Desmarcar todas", width=120, height=30,
-            font=ctk.CTkFont(size=11),
-            command=self._uncheck_all_sheets,
-        ).pack(side="left", padx=5)
-
-        ctk.CTkButton(
-            center, text="📥  Importar hojas seleccionadas",
-            width=280, height=38,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#2B7A2B",
-            command=self._select_chosen_sheets,
-        ).pack(pady=(5, 0))
-
-    def _check_all_sheets(self) -> None:
-        """Marca todos los checkboxes de hojas."""
-        for cb in self._sheet_checkboxes.values():
-            cb.select()
-
-    def _uncheck_all_sheets(self) -> None:
-        """Desmarca todos los checkboxes de hojas."""
-        for cb in self._sheet_checkboxes.values():
-            cb.deselect()
-
-    def _select_all_sheets(self) -> None:
-        """Selecciona todas las hojas y lanza el preview."""
-        self._selected_sheets = None  # None = todas
-        thread = threading.Thread(target=self._load_preview, daemon=True)
-        thread.start()
-
-    def _select_chosen_sheets(self) -> None:
-        """Selecciona las hojas marcadas y lanza el preview."""
-        chosen = [
-            name for name, cb in self._sheet_checkboxes.items()
-            if cb.get() == 1
-        ]
-        if not chosen:
-            self._show_msg("⚠️ Seleccione al menos una hoja")
-            return
-        self._selected_sheets = chosen
-        thread = threading.Thread(target=self._load_preview, daemon=True)
-        thread.start()
-
-    def _load_preview(self) -> None:
-        """Carga datos del archivo en hilo separado."""
-        self.after(0, lambda: self._show_msg("Leyendo archivo..."))
-        self.after(0, lambda: self._progress.configure(mode="indeterminate"))
-        self.after(0, lambda: self._progress.start())
 
         try:
-            from utils.excel_parser import ExcelParser
+            self._preview_data = preview_archivo(filepath)
+            self._show_preview()
+            self._btn_import.configure(state="normal")
 
-            parser = ExcelParser(self._file_path, selected_sheets=self._selected_sheets)
-            result = parser.parse()
-
-            self._all_data = result.get("valid_rows", [])
-            # Usar datos crudos COMPLETOS del Excel para la vista previa
-            self._preview_data = result.get("raw_preview", [])
-            if not self._preview_data:
-                self._preview_data = self._all_data
-            self._error_details = result.get("errors", [])
-            self._duplicate_details = result.get("duplicates", [])
-            self._import_summary = {
-                "total_rows": result.get("total_rows", 0),
-                "valid": len(self._all_data),
-                "errors": len(result.get("errors", [])),
-                "duplicates": len(result.get("duplicates", [])),
-                "skipped": result.get("skipped", 0),
-                "error_details": result.get("errors", []),
-                "sheet_count": result.get("sheet_count", 1),
-                "sheet_names": result.get("sheet_names", []),
-            }
-
-            self.after(0, self._display_preview)
-
-        except ImportError:
-            self.after(0, lambda: self._show_msg(
-                "⚠️ Módulo de importación no disponible. "
-                "Verificar utils/excel_parser.py"
-            ))
-        except Exception as e:
-            logger.error("Error al leer archivo: %s", e)
-            msg = f"❌ Error al leer: {e}"
-            self.after(0, lambda msg=msg: self._show_msg(msg))
-        finally:
-            self.after(0, lambda: self._progress.stop())
-            self.after(0, lambda: self._progress.configure(mode="determinate"))
-            self.after(0, lambda: self._progress.set(0))
-
-    def _display_preview(self) -> None:
-        """Muestra la previsualización completa con tabs de datos y errores."""
-        for w in self._content_frame.winfo_children():
-            w.destroy()
-
-        # Layout principal: left (tabview) + right (summary)
-        self._content_frame.columnconfigure(0, weight=3)
-        self._content_frame.columnconfigure(1, weight=1)
-        self._content_frame.rowconfigure(0, weight=1)
-
-        # ── Tabview con Vista Previa y Errores ───────────────────
-        tabview = ctk.CTkTabview(self._content_frame, corner_radius=10)
-        tabview.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
-
-        tab_preview = tabview.add("📋 Datos a Importar")
-        tab_errors = tabview.add("⚠️ Errores y Detalles")
-
-        # ── TAB 1: Vista previa completa ─────────────────────────
-        total_preview = len(self._preview_data)
-        ctk.CTkLabel(
-            tab_preview,
-            text=f"Vista previa — {total_preview} registros del archivo Excel",
-            font=ctk.CTkFont(size=13, weight="bold"),
-        ).pack(fill="x", padx=10, pady=(5, 5))
-
-        if self._preview_data:
-            columns = [c for c in self._preview_data[0].keys() if not c.startswith("_")]
-            col_defs = [(col, col, 120) for col in columns]
-
-            table = DataTable(
-                tab_preview, columns=col_defs,
-                page_size=PAGINATION_SIZE,
-                show_pagination=True,
-            )
-            table.pack(fill="both", expand=True, padx=5, pady=(0, 5))
-            table.load_data(self._preview_data)
-
-        # ── TAB 2: Errores y Detalles ────────────────────────────
-        s = self._import_summary
-
-        # Sub-resumen de análisis
-        analysis_frame = ctk.CTkFrame(tab_errors, fg_color="transparent")
-        analysis_frame.pack(fill="x", padx=10, pady=(5, 10))
-
-        analysis_items = [
-            ("📋 Total filas leídas:", str(s.get("total_rows", 0))),
-            ("📊 Hojas procesadas:", f"{s.get('sheet_count', 1)} — {', '.join(s.get('sheet_names', []))}"),
-            ("✅ Registros válidos:", str(s.get("valid", 0))),
-            ("❌ Registros con errores:", str(s.get("errors", 0))),
-            ("⚠️ Duplicados en archivo:", str(s.get("duplicates", 0))),
-            ("⏭️ Filas vacías omitidas:", str(s.get("skipped", 0))),
-        ]
-
-        for label_text, value_text in analysis_items:
-            row_f = ctk.CTkFrame(analysis_frame, fg_color="transparent")
-            row_f.pack(fill="x", pady=1)
-            ctk.CTkLabel(
-                row_f, text=label_text,
-                font=ctk.CTkFont(size=12), anchor="w",
-            ).pack(side="left")
-            ctk.CTkLabel(
-                row_f, text=value_text,
-                font=ctk.CTkFont(size=12, weight="bold"), anchor="e",
-            ).pack(side="right")
-
-        # ── Tabla de errores ──────────────────────────────────────
-        error_list = self._error_details or []
-        if error_list:
-            ctk.CTkLabel(
-                tab_errors,
-                text=f"❌ Errores de validación ({len(error_list)})",
-                font=ctk.CTkFont(size=13, weight="bold"),
-                text_color=("#CC0000", "#FF6B6B"),
-            ).pack(fill="x", padx=10, pady=(5, 3))
-
-            error_rows = []
-            for err in error_list:
-                if isinstance(err, dict):
-                    error_rows.append({
-                        "Ubicación": str(err.get("row", "?")),
-                        "Error": str(err.get("error", "")),
-                    })
-                else:
-                    error_rows.append({"Ubicación": "?", "Error": str(err)})
-
-            error_col_defs = [
-                ("Ubicación", "Ubicación", 180),
-                ("Error", "Descripción del Error", 500),
-            ]
-            error_table = DataTable(
-                tab_errors, columns=error_col_defs,
-                page_size=20, show_pagination=True,
-            )
-            error_table.pack(fill="both", expand=True, padx=5, pady=(0, 5))
-            error_table.load_data(error_rows)
-        else:
-            ctk.CTkLabel(
-                tab_errors,
-                text="✅ No se detectaron errores de validación",
-                font=ctk.CTkFont(size=13),
-                text_color=("green", "#4ECB71"),
-            ).pack(fill="x", padx=10, pady=(10, 5))
-
-        # ── Tabla de duplicados ───────────────────────────────────
-        dup_list = self._duplicate_details or []
-        if dup_list:
-            ctk.CTkLabel(
-                tab_errors,
-                text=f"⚠️ Duplicados en el archivo ({len(dup_list)})",
-                font=ctk.CTkFont(size=13, weight="bold"),
-                text_color=("#CC6600", "#FFA500"),
-            ).pack(fill="x", padx=10, pady=(10, 3))
-
-            dup_rows = []
-            for dup in dup_list:
-                if isinstance(dup, dict):
-                    nombre = dup.get("apellido", "") + " " + dup.get("nombre", "")
-                    doc = dup.get("dni", "") or dup.get("pasaporte", "")
-                    hoja = dup.get("row", dup.get("_hoja_origen", "?"))
-                    dup_rows.append({
-                        "Ubicación": str(hoja),
-                        "Nombre": nombre.strip(),
-                        "Documento": str(doc),
-                    })
-
-            if dup_rows:
-                dup_col_defs = [
-                    ("Ubicación", "Ubicación", 150),
-                    ("Nombre", "Nombre", 250),
-                    ("Documento", "Documento", 150),
-                ]
-                dup_table = DataTable(
-                    tab_errors, columns=dup_col_defs,
-                    page_size=20, show_pagination=True,
+            if self._preview_data["columnas_faltantes"]:
+                faltantes = ", ".join(self._preview_data["columnas_faltantes"])
+                messagebox.showwarning(
+                    "Columnas Faltantes",
+                    f"No se detectaron las siguientes columnas obligatorias:\n\n{faltantes}\n\n"
+                    "La importación podría tener errores.",
                 )
-                dup_table.pack(fill="both", expand=True, padx=5, pady=(0, 5))
-                dup_table.load_data(dup_rows)
+        except Exception as e:
+            logger.error("Error al cargar preview: %s", e)
+            messagebox.showerror("Error", f"No se pudo leer el archivo:\n{e}")
+            self._btn_import.configure(state="disabled")
 
-        # ── Summary panel (derecha) ──────────────────────────────
-        summary_frame = ctk.CTkFrame(self._content_frame, corner_radius=10)
-        summary_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
-
-        ctk.CTkLabel(
-            summary_frame, text="Resumen",
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).pack(fill="x", padx=15, pady=(15, 10))
-
-        stats = [
-            ("📋 Hojas leídas:", str(s.get("sheet_count", 1)), "#64B5F6"),
-            ("Total filas leídas:", str(s.get("total_rows", 0)), "gray90"),
-            ("✅ Válidos:", str(s.get("valid", 0)), "#4ECB71"),
-            ("❌ Errores:", str(s.get("errors", 0)), "#FF6B6B"),
-            ("⚠️ Duplicados:", str(s.get("duplicates", 0)), "#FFA500"),
-            ("⏭️ Omitidas:", str(s.get("skipped", 0)), "gray60"),
-        ]
-
-        for label, value, color in stats:
-            row = ctk.CTkFrame(summary_frame, fg_color="transparent")
-            row.pack(fill="x", padx=15, pady=3)
-
-            ctk.CTkLabel(
-                row, text=label, font=ctk.CTkFont(size=12), anchor="w",
-            ).pack(side="left")
-
-            ctk.CTkLabel(
-                row, text=value,
-                font=ctk.CTkFont(size=14, weight="bold"),
-                text_color=color,
-            ).pack(side="right")
-
-        # Notas de importación
-        ctk.CTkLabel(
-            summary_frame, text="📝 Notas",
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).pack(fill="x", padx=15, pady=(15, 5))
-
-        notas = []
-        if s.get("errors", 0) > 0:
-            notas.append(f"• {s['errors']} registros con errores NO serán importados.")
-        if s.get("duplicates", 0) > 0:
-            notas.append(f"• {s['duplicates']} duplicados dentro del archivo (se importa solo el primero).")
-        if s.get("skipped", 0) > 0:
-            notas.append(f"• {s['skipped']} filas vacías fueron omitidas.")
-        if s.get("valid", 0) > 0:
-            notas.append(f"• {s['valid']} registros listos para importar.")
-        if not notas:
-            notas.append("• Sin observaciones.")
-
-        notas_text = ctk.CTkTextbox(
-            summary_frame, height=120,
-            font=ctk.CTkFont(size=11),
-            fg_color="transparent",
-        )
-        notas_text.pack(fill="x", padx=15, pady=(0, 10))
-        notas_text.insert("end", "\n".join(notas))
-        notas_text.configure(state="disabled")
-
-        # Enable import button and mode selector
-        if s.get("valid", 0) > 0:
-            self._import_btn.configure(state="normal")
-            self._mode_combo.configure(state="normal")
-            self._show_msg(
-                f"✅ {s['valid']} registros listos para importar",
-                error=False,
-            )
-        else:
-            self._show_msg("⚠️ No hay registros válidos para importar")
-
-    # ── Import ───────────────────────────────────────────────────
-
-    def _handle_import(self) -> None:
-        """Inicia la importación de datos."""
-        if self._is_importing or not self._all_data:
+    def _show_preview(self):
+        if not self._preview_data:
             return
 
-        valid_count = len(self._all_data)
+        # Mostrar mapeo
+        self._mapeo_text.configure(state="normal")
+        self._mapeo_text.delete("1.0", "end")
+        for col_excel, campo_interno in self._preview_data["mapeo"].items():
+            self._mapeo_text.insert("end", f"  {col_excel}  ->  {campo_interno}\n")
+        if self._preview_data["columnas_faltantes"]:
+            self._mapeo_text.insert("end", f"\n  FALTANTES: {self._preview_data['columnas_faltantes']}\n")
+        self._mapeo_text.configure(state="disabled")
 
-        # Mensaje según modo
-        mode_msgs = {
-            "skip": "Los registros duplicados serán OMITIDOS.",
-            "update": "Los registros duplicados serán ACTUALIZADOS.",
-            "always": "TODOS los registros serán importados\n(puede crear duplicados).",
-        }
-        mode_msg = mode_msgs.get(self._import_mode, mode_msgs["skip"])
+        # Mostrar preview en tabla
+        self._preview_table.load_data(self._preview_data["filas_preview"])
 
-        confirm = messagebox.askyesno(
+        self._progress_label.configure(
+            text=f"Archivo cargado: {self._preview_data['total_filas']} filas detectadas",
+            text_color=("gray10", "gray90"),
+        )
+
+    def _start_import(self):
+        if not self._filepath or self._import_running:
+            return
+
+        result = messagebox.askyesno(
             "Confirmar Importación",
-            f"¿Importar {valid_count} registros a la base de datos?\n\n"
-            f"{mode_msg}",
-            parent=self,
+            f"Se importarán {self._preview_data['total_filas']} filas.\n\n"
+            "¿Desea continuar?",
         )
-        if not confirm:
+        if not result:
             return
 
-        self._is_importing = True
-        self._import_btn.configure(state="disabled", text="Importando...")
-        self._mode_combo.configure(state="disabled")
+        self._import_running = True
+        self._btn_import.configure(state="disabled")
+        self._btn_select.configure(state="disabled")
+        self._btn_cancel.configure(state="normal")
 
-        thread = threading.Thread(target=self._import_thread, daemon=True)
+        thread = threading.Thread(target=self._run_import, daemon=True)
         thread.start()
 
-    def _import_thread(self) -> None:
-        """Hilo de importación."""
-        from controllers.huesped_controller import HuespedController
-        from utils.exceptions import DuplicateRecordError
+    def _run_import(self):
+        try:
+            usuario = "sistema"
+            if self._app and hasattr(self._app, "auth_controller"):
+                usuario = self._app.auth_controller.current_user
 
-        controller = HuespedController(self._session)
-        total = len(self._all_data)
-        nuevos, actualizados, omitidos, errores = 0, 0, 0, 0
-        mode = self._import_mode
-
-        for i, row in enumerate(self._all_data, 1):
-            try:
-                row["usuario_carga"] = self._session.username
-
-                if mode == "skip":
-                    # Modo omitir: usar crear normal (falla si duplicado)
-                    controller.crear(row)
-                    nuevos += 1
-
-                elif mode == "update":
-                    # Modo actualizar: crear o actualizar si existe
-                    result = controller.crear_o_actualizar(row)
-                    if result == "created":
-                        nuevos += 1
-                    elif result == "updated":
-                        actualizados += 1
-                    else:
-                        omitidos += 1
-
-                elif mode == "always":
-                    # Modo siempre: forzar creación sin verificar duplicados
-                    controller.crear_sin_verificar(row)
-                    nuevos += 1
-
-            except DuplicateRecordError:
-                omitidos += 1
-            except Exception as e:
-                errores += 1
-                logger.warning("Error al importar fila %d: %s", i, e)
-
-            # Actualizar progreso
-            progress = i / total
-            ok_total = nuevos + actualizados
-            self.after(0, lambda p=progress: self._progress.set(p))
-            self.after(
-                0,
-                lambda n=nuevos, u=actualizados, o=omitidos, e=errores, i_=i: self._show_msg(
-                    f"Importando... {i_}/{total} — ✅{n} 🔄{u} ⏭️{o} ❌{e}",
-                    error=False,
-                ),
+            ctrl = ImportController(usuario=usuario)
+            stats = ctrl.importar(
+                filepath=self._filepath,
+                on_progress=self._update_progress,
             )
 
-        # Finalizar
-        self.after(0, lambda: self._import_complete(nuevos, actualizados, omitidos, errores))
+            self.after(0, lambda: self._import_complete(stats))
 
-    def _import_complete(self, nuevos: int, actualizados: int, omitidos: int, errores: int) -> None:
-        """Completa la importación.
+        except Exception as e:
+            self.after(0, lambda: self._import_error(str(e)))
 
-        Args:
-            nuevos: Registros nuevos creados.
-            actualizados: Registros actualizados.
-            omitidos: Registros omitidos (duplicados).
-            errores: Registros con error.
-        """
-        self._is_importing = False
-        self._import_btn.configure(text="🚀  Importar Datos")
-        self._mode_combo.configure(state="normal")
-        self._progress.set(1)
+    def _update_progress(self, current: int, total: int, msg: str):
+        def update():
+            self._progress_bar.set(current / max(total, 1))
+            self._progress_label.configure(text=msg)
+        self.after(0, update)
 
-        total_ok = nuevos + actualizados
-        partes = []
-        if nuevos > 0:
-            partes.append(f"{nuevos} nuevos")
-        if actualizados > 0:
-            partes.append(f"{actualizados} actualizados")
-        if omitidos > 0:
-            partes.append(f"{omitidos} omitidos")
-        if errores > 0:
-            partes.append(f"{errores} errores")
+    def _import_complete(self, stats: dict):
+        self._import_running = False
+        self._btn_import.configure(state="normal")
+        self._btn_select.configure(state="normal")
+        self._btn_cancel.configure(state="disabled")
+        self._progress_bar.set(1.0)
 
-        resumen = ", ".join(partes) if partes else "sin cambios"
-
-        if errores == 0 and total_ok > 0:
-            self._show_msg(
-                f"✅ Importación completa: {resumen}",
-                error=False,
-            )
-        elif total_ok > 0:
-            self._show_msg(
-                f"⚠️ Importación finalizada: {resumen}",
-            )
-        else:
-            self._show_msg(
-                f"⚠️ Sin registros importados: {resumen}",
-            )
-
-        logger.info(
-            "Importación completada: %d nuevos, %d actualizados, %d omitidos, %d errores — usuario: %s",
-            nuevos, actualizados, omitidos, errores, self._session.username,
+        errores = len(stats.get("errores", []))
+        msg = (
+            f"Importación completada:\n\n"
+            f"  Estadías creadas: {stats['estadias_creadas']}\n"
+            f"  Total filas: {stats['total_filas']}\n"
+            f"  Errores: {errores}"
         )
 
-    def _show_msg(self, msg: str, error: bool = True) -> None:
-        """Muestra mensaje.
+        if errores > 0:
+            msg += f"\n\nPrimeros errores:"
+            for err in stats["errores"][:5]:
+                msg += f"\n  Fila {err.get('fila', '?')}: {err.get('errores', ['?'])[0]}"
+            messagebox.showwarning("Importación con Errores", msg)
+        else:
+            messagebox.showinfo("Importación Exitosa", msg)
 
-        Args:
-            msg: Texto.
-            error: True=rojo, False=verde.
-        """
-        color = ("red", "#FF6B6B") if error else ("green", "#4ECB71")
-        self._msg_label.configure(text=msg, text_color=color)
+        if self._app and hasattr(self._app, "status_bar"):
+            self._app.status_bar.set_success(
+                f"Importación: {stats['estadias_creadas']} estadías creadas"
+            )
+        if self._app and hasattr(self._app, "refresh_dashboard"):
+            self._app.refresh_dashboard()
+
+    def _import_error(self, error_msg: str):
+        self._import_running = False
+        self._btn_import.configure(state="normal")
+        self._btn_select.configure(state="normal")
+        self._btn_cancel.configure(state="disabled")
+        self._progress_bar.set(0)
+
+        messagebox.showerror("Error de Importación", error_msg)
+        if self._app and hasattr(self._app, "status_bar"):
+            self._app.status_bar.set_error(f"Error: {error_msg[:80]}")
+
+    def _cancel_import(self):
+        self._import_running = False
+        self._progress_label.configure(text="Importación cancelada")
+        self._btn_cancel.configure(state="disabled")

@@ -1,1 +1,1 @@
-"""Componentes reutilizables de UI del sistema S.C.A.H."""
+"""Componentes reutilizables de UI."""

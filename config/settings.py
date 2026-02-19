@@ -1,4 +1,4 @@
-"""Configuración global del sistema S.C.A.H.
+"""Configuración global del sistema S.C.A.H. v2.
 
 Define constantes, rutas y parámetros de configuración utilizados
 en toda la aplicación.
@@ -17,7 +17,6 @@ ASSETS_DIR: Path = BASE_DIR / "assets"
 ICONS_DIR: Path = ASSETS_DIR / "icons"
 THEMES_DIR: Path = ASSETS_DIR / "themes"
 
-# Crear directorios si no existen
 for _dir in [DATABASE_DIR, MIGRATIONS_DIR, LOGS_DIR, ASSETS_DIR, ICONS_DIR, THEMES_DIR]:
     _dir.mkdir(parents=True, exist_ok=True)
 
@@ -26,7 +25,7 @@ for _dir in [DATABASE_DIR, MIGRATIONS_DIR, LOGS_DIR, ASSETS_DIR, ICONS_DIR, THEM
 # ============================================================
 DATABASE_PATH: Path = DATABASE_DIR / "scah.db"
 DATABASE_BACKUP_DIR: Path = DATABASE_DIR / "backups"
-DATABASE_TIMEOUT: int = 30  # segundos
+DATABASE_TIMEOUT: int = 30
 DATABASE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============================================================
@@ -35,108 +34,134 @@ DATABASE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 BCRYPT_WORK_FACTOR: int = 12
 MAX_LOGIN_ATTEMPTS: int = 3
 LOCKOUT_DURATION_MINUTES: int = 15
-SESSION_TIMEOUT_MINUTES: int = 480  # 8 horas
+SESSION_TIMEOUT_MINUTES: int = 480
 
-# ============================================================
-# CONTRASEÑA POR DEFECTO DEL ADMIN INICIAL
-# ============================================================
 DEFAULT_ADMIN_USERNAME: str = "admin"
-DEFAULT_ADMIN_PASSWORD: str = "Admin2026!"  # Cambiar en primer inicio
+DEFAULT_ADMIN_PASSWORD: str = "Admin2026!"
 DEFAULT_ADMIN_FULLNAME: str = "Administrador del Sistema"
 
 # ============================================================
-# UI - INTERFAZ DE USUARIO
+# UI
 # ============================================================
 APP_TITLE: str = "S.C.A.H. - Sistema de Control de Alojamiento y Huéspedes"
-APP_VERSION: str = "1.0.0"
+APP_VERSION: str = "2.0.0"
 APP_ORGANIZATION: str = "Departamento de Inteligencia Criminal - Policía de Tucumán"
 APP_SUBTITLE: str = "Sección Hoteles"
 
 LOGIN_WINDOW_SIZE: str = "450x550"
 LOGIN_WINDOW_RESIZABLE: bool = False
-
-DEFAULT_APPEARANCE_MODE: str = "dark"  # "dark", "light", "system"
-DEFAULT_COLOR_THEME: str = "blue"  # "blue", "green", "dark-blue"
-
-DEBOUNCE_MS: int = 300  # milisegundos para búsqueda
-PAGINATION_SIZE: int = 50  # registros por página
+DEFAULT_APPEARANCE_MODE: str = "dark"
+DEFAULT_COLOR_THEME: str = "blue"
+DEBOUNCE_MS: int = 300
+PAGINATION_SIZE: int = 50
 
 # ============================================================
-# IMPORTACIÓN DE ARCHIVOS
+# BACKUP AUTOMÁTICO
+# ============================================================
+BACKUP_ENABLED: bool = True
+BACKUP_INTERVAL_HOURS: int = 24
+BACKUP_MAX_FILES: int = 10
+
+# ============================================================
+# IMPORTACIÓN EXCEL
 # ============================================================
 ALLOWED_EXTENSIONS: list[str] = [".xlsx", ".xls"]
 MAX_IMPORT_ROWS: int = 10000
 PREVIEW_ROWS: int = 10
 
-# Columnas del Excel que se deben ignorar (contadores, numeradores, etc.)
 COLUMNAS_IGNORAR: list[str] = [
     "n°", "nro", "nº", "n", "#", "numero", "número",
     "item", "orden", "nro.", "n°.",
 ]
 
 COLUMNAS_MAPEO: dict[str, list[str]] = {
-    "nacionalidad": ["nacionalidad", "pais", "país", "country", "nation", "nacion", "nación"],
-    "procedencia": ["procedencia", "origen", "ciudad_origen", "from", "domicilio",
-                     "direccion", "dirección", "ciudad"],
-    # Campo especial: contiene "apellido y nombre" combinados, se divide en _process_row
-    "apellido_nombre": ["apellido_y_nombre", "apellido/nombre", "apellido_nombre",
-                         "apellido_y_nombres", "apellidos_y_nombre",
-                         "apellidos_y_nombres", "nombre_y_apellido",
-                         "nombre_apellido", "nombres_y_apellido"],
+    "nacionalidad": [
+        "nacionalidad", "pais", "país", "country", "nation", "nacion", "nación",
+    ],
+    "procedencia": [
+        "procedencia", "origen", "ciudad_origen", "from", "domicilio",
+        "direccion", "dirección", "ciudad",
+    ],
+    "apellido_nombre": [
+        "apellido_y_nombre", "apellido/nombre", "apellido_nombre",
+        "apellido_y_nombres", "apellidos_y_nombre",
+        "apellidos_y_nombres", "nombre_y_apellido",
+        "nombre_apellido", "nombres_y_apellido",
+    ],
     "apellido": ["apellido", "apellidos", "last_name", "surname"],
     "nombre": ["nombre", "nombres", "first_name", "name"],
-    "dni": ["dni", "documento", "nro_documento", "document",
-            "d.n.i", "d.n.i.", "n°_doc", "nro_doc", "n_doc",
-            "n°_documento", "nº_doc", "nº_documento",
-            "numero_documento", "número_documento", "numero_doc",
-            "n°doc", "n°_de_doc", "nro._doc", "nro._documento",
-            "dni/pasaporte", "dni_/_pasaporte", "dni_o_pasaporte",
-            "d.n.i._/_pas.", "d.n.i._/_pas", "dni_/_pas.", "dni_/_pas",
-            "dni/pas", "d.n.i./pas.", "d.n.i./pas", "d.n.i./pasaporte",
-            "dni/pas.", "d.n.i_/_pas", "dni_pas"],
-    "pasaporte": ["pasaporte", "passport", "nro_pasaporte",
-                   "n°_pasaporte", "nº_pasaporte"],
+    "dni": [
+        "dni", "documento", "nro_documento", "document",
+        "d.n.i", "d.n.i.", "n°_doc", "nro_doc", "n_doc",
+        "n°_documento", "nº_doc", "nº_documento",
+        "numero_documento", "número_documento", "numero_doc",
+        "n°doc", "n°_de_doc", "nro._doc", "nro._documento",
+        "dni/pasaporte", "dni_/_pasaporte", "dni_o_pasaporte",
+        "d.n.i._/_pas.", "d.n.i._/_pas", "dni_/_pas.", "dni_/_pas",
+        "dni/pas", "d.n.i./pas.", "d.n.i./pas", "d.n.i./pasaporte",
+        "dni/pas.", "d.n.i_/_pas", "dni_pas",
+    ],
+    "pasaporte": [
+        "pasaporte", "passport", "nro_pasaporte",
+        "n°_pasaporte", "nº_pasaporte",
+    ],
     "edad": ["edad", "age", "años", "edades"],
-    "fecha_nacimiento": ["fecha_nacimiento", "fecha_de_nacimiento", "nacimiento",
-                          "fecha_de_nac.", "fecha_de_nac", "fecha_nac", "fecha_nac.",
-                          "f._nac.", "f._nac", "fec._nac.", "fec._nac",
-                          "fec._nacimiento", "f.nac", "f.nac.", "fec.nac",
-                          "fec.nac.", "birth_date", "date_of_birth",
-                          "fch_nac", "fch._nac", "fch._nac."],
-    "profesion": ["profesion", "profesión", "ocupacion", "ocupación",
-                  "profession", "occupation", "prof", "prof."],
-    "establecimiento": ["hotel", "establecimiento", "alojamiento",
-                         "hostal", "pension", "pensión", "hospedaje",
-                         "hosteria", "hostería", "apart", "apart_hotel",
-                         "motel", "residencial", "posada", "hotel_carlos_v"],
-    "habitacion": ["habitacion", "habitación", "room",
-                   "nro_habitacion", "nro_habitación", "cuarto",
-                   "n°_hab", "n°_hab.", "nº_hab", "nro._hab",
-                   "n°_habitacion", "n°_habitación"],
+    "fecha_nacimiento": [
+        "fecha_nacimiento", "fecha_de_nacimiento", "nacimiento",
+        "fecha_de_nac.", "fecha_de_nac", "fecha_nac", "fecha_nac.",
+        "f._nac.", "f._nac", "fec._nac.", "fec._nac",
+        "fec._nacimiento", "f.nac", "f.nac.", "fec.nac",
+        "fec.nac.", "birth_date", "date_of_birth",
+        "fch_nac", "fch._nac", "fch._nac.",
+    ],
+    "profesion": [
+        "profesion", "profesión", "ocupacion", "ocupación",
+        "profession", "occupation", "prof", "prof.",
+    ],
+    "establecimiento": [
+        "hotel", "establecimiento", "alojamiento",
+        "hostal", "pension", "pensión", "hospedaje",
+        "hosteria", "hostería", "apart", "apart_hotel",
+        "motel", "residencial", "posada",
+    ],
+    "habitacion": [
+        "habitacion", "habitación", "room",
+        "nro_habitacion", "nro_habitación", "cuarto",
+        "n°_hab", "n°_hab.", "nº_hab", "nro._hab",
+        "n°_habitacion", "n°_habitación",
+    ],
     "destino": ["destino", "destination", "hacia", "a_donde", "destino_a"],
-    "vehiculo": ["vehiculo", "vehículo", "vehicle", "auto", "coche",
-                 "vehic", "vehic.", "patente", "dominio",
-                 "datos_vehiculo", "datos_vehículo"],
-    "telefono": ["telefono", "teléfono", "phone",
-                 "celular", "mobile", "nro_telefono", "nro_teléfono",
-                 "n°_tel", "n°_tel.", "nº_tel", "contacto"],
-    "fecha_entrada": ["fecha_entrada", "ingreso", "check_in", "entrada",
-                      "checkin", "fecha_ingreso", "f._entrada", "f._ingreso",
-                      "fecha_de_entrada", "fecha_de_ingreso",
-                      "fec._entrada", "fec._ingreso",
-                      "f.entrada", "f.ingreso", "fec.entrada", "fec.ingreso"],
-    "fecha_salida": ["fecha_salida", "egreso", "check_out", "salida",
-                     "checkout", "fecha_egreso", "f._salida", "f._egreso",
-                     "fecha_de_salida", "fecha_de_egreso",
-                     "fec._salida", "fec._egreso",
-                     "f.salida", "f.egreso", "fec.salida", "fec.egreso"],
+    "vehiculo": [
+        "vehiculo", "vehículo", "vehicle", "auto", "coche",
+        "vehic", "vehic.", "patente", "dominio",
+        "datos_vehiculo", "datos_vehículo",
+    ],
+    "telefono": [
+        "telefono", "teléfono", "phone",
+        "celular", "mobile", "nro_telefono", "nro_teléfono",
+        "n°_tel", "n°_tel.", "nº_tel", "contacto",
+    ],
+    "fecha_entrada": [
+        "fecha_entrada", "ingreso", "check_in", "entrada",
+        "checkin", "fecha_ingreso", "f._entrada", "f._ingreso",
+        "fecha_de_entrada", "fecha_de_ingreso",
+        "fec._entrada", "fec._ingreso",
+        "f.entrada", "f.ingreso", "fec.entrada", "fec.ingreso",
+    ],
+    "fecha_salida": [
+        "fecha_salida", "egreso", "check_out", "salida",
+        "checkout", "fecha_egreso", "f._salida", "f._egreso",
+        "fecha_de_salida", "fecha_de_egreso",
+        "fec._salida", "fec._egreso",
+        "f.salida", "f.egreso", "fec.salida", "fec.egreso",
+    ],
 }
 
 # ============================================================
 # LOGGING
 # ============================================================
 LOG_FILE: Path = LOGS_DIR / "scah.log"
-LOG_MAX_BYTES: int = 5 * 1024 * 1024  # 5 MB
+LOG_MAX_BYTES: int = 5 * 1024 * 1024
 LOG_BACKUP_COUNT: int = 5
 LOG_FORMAT: str = "%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s"
 LOG_DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
@@ -161,3 +186,5 @@ PROVINCIAS_ARGENTINA: list[str] = [
 ]
 
 ROLES_USUARIO: list[str] = ["admin", "supervisor", "operador"]
+TIPOS_HABITACION: list[str] = ["standard", "doble", "triple", "suite", "familiar", "otro"]
+ESTADOS_HABITACION: list[str] = ["disponible", "ocupada", "mantenimiento", "reservada"]

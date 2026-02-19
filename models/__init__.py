@@ -1,1 +1,1 @@
-"""Módulo de modelos de datos del sistema S.C.A.H."""
+"""Modelos de datos de S.C.A.H. v2."""

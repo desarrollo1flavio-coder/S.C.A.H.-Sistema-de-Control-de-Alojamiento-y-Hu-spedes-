@@ -1,8 +1,9 @@
+# S.C.A.H. v2 - Dependencias
 customtkinter>=5.2.0
-pandas>=2.1.0
-openpyxl>=3.1.0
-xlrd>=2.0.1
-bcrypt>=4.0.0
 pydantic>=2.0.0
-tkcalendar>=1.6.1
+pandas>=2.0.0
+openpyxl>=3.1.0
+xlrd>=2.0.0
+bcrypt>=4.0.0
 reportlab>=4.0.0
+Pillow>=10.0.0

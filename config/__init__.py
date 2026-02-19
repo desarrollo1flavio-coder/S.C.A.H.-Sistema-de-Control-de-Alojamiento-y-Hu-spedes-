@@ -1,1 +1,1 @@
-"""Módulo de configuración del sistema S.C.A.H."""
+"""Módulo de configuración de S.C.A.H. v2."""

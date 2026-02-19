@@ -1,1 +1,1 @@
-"""Módulo de controladores del sistema S.C.A.H."""
+"""Módulo de controladores de S.C.A.H. v2."""

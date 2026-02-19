@@ -1,4 +1,16 @@
-"""S.C.A.H. - Sistema de Control de Alojamiento y Huéspedes v2.
+"""Script de reconstrucción S.C.A.H. v2 - Fase 4.
+
+main.py + requirements.txt + views/__init__.py update
+"""
+import os
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+FILES = {}
+
+# ============================================================
+# main.py — ORQUESTADOR PRINCIPAL
+# ============================================================
+FILES["main.py"] = '''"""S.C.A.H. - Sistema de Control de Alojamiento y Huéspedes v2.
 
 Punto de entrada principal de la aplicación.
 """
@@ -54,7 +66,7 @@ class SCAHApp(ctk.CTk):
             from tkinter import messagebox
             messagebox.showerror(
                 "Error de Base de Datos",
-                f"No se pudo inicializar la base de datos:\n{e}\n\n"
+                f"No se pudo inicializar la base de datos:\\n{e}\\n\\n"
                 "La aplicación se cerrará.",
             )
             sys.exit(1)
@@ -213,12 +225,12 @@ class SCAHApp(ctk.CTk):
         try:
             path = create_backup()
             from tkinter import messagebox
-            messagebox.showinfo("Backup", f"Backup creado:\n{path}")
+            messagebox.showinfo("Backup", f"Backup creado:\\n{path}")
             if self._status_bar:
                 self._status_bar.set_success("Backup creado exitosamente")
         except Exception as e:
             from tkinter import messagebox
-            messagebox.showerror("Error", f"Error al crear backup:\n{e}")
+            messagebox.showerror("Error", f"Error al crear backup:\\n{e}")
 
     def _start_backup_scheduler(self):
         """Inicia un timer periódico para backups automáticos."""
@@ -255,3 +267,46 @@ def main():
 
 if __name__ == "__main__":
     main()
+'''
+
+# ============================================================
+# requirements.txt
+# ============================================================
+FILES["requirements.txt"] = '''# S.C.A.H. v2 - Dependencias
+customtkinter>=5.2.0
+pydantic>=2.0.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+xlrd>=2.0.0
+bcrypt>=4.0.0
+reportlab>=4.0.0
+Pillow>=10.0.0
+'''
+
+# ============================================================
+# views/__init__.py (update)
+# ============================================================
+FILES["views/__init__.py"] = '''"""Vistas de S.C.A.H. v2."""
+'''
+
+# ============================================================
+# WRITE ALL FILES
+# ============================================================
+def write_all():
+    written = 0
+    for rel_path, content in FILES.items():
+        full_path = os.path.join(BASE, rel_path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        written += 1
+        print(f"  [OK] {rel_path}")
+    print(f"\n  Total: {written} archivos escritos")
+
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("S.C.A.H. v2 - Fase 4: main.py + requirements.txt")
+    print("=" * 60)
+    write_all()
+    print("\nFase 4 completada.")
